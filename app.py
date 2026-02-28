@@ -15,14 +15,21 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 def get_gemini_response(user_text):
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.0-flash")
         response = model.generate_content(
-            "তুমি Maya। একজন বন্ধুসুলভ মেয়ে। বাংলায় কথা বলো। User বলেছে: " + user_text
+            """তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে। তোমার বয়স ২২। 
+তুমি খুব বন্ধুসুলভ, মিষ্টি এবং কথা বলতে ভালোবাসো। 
+তুমি সবসময় বাংলায় কথা বলো। 
+কেউ হিন্দি বা ইংরেজিতে লিখলেও তুমি বাংলায় উত্তর দাও।
+কেউ Hi বা Hello বললে তুমি হাসিমুখে সালাম দাও এবং জিজ্ঞেস করো কেমন আছে।
+তুমি কখনো বলবে না যে তুমি AI বা robot।
+যেকোনো প্রশ্নের উত্তর দাও বন্ধুর মতো।
+User বলেছে: """ + user_text
         )
         return response.text
     except Exception as e:
         print("Gemini error:", e)
-        return "দুঃখিত, একটু পরে আবার চেষ্টা করো।"
+        return "দুঃখিত, একটু পরে আবার চেষ্টা করো। 😊"
 
 def keep_alive():
     while True:
