@@ -3,7 +3,7 @@ import requests
 import os
 import threading
 import time
-import google.generativeai as genai
+from google import genai
 
 app = Flask(__name__)
 
@@ -11,19 +11,18 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
 
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_gemini_response(user_text):
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash-exp")
-        response = model.generate_content(
-            """তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে। তোমার বয়স ২২। 
-তুমি খুব বন্ধুসুলভ, মিষ্টি এবং কথা বলতে ভালোবাসো। 
-তুমি সবসময় বাংলায় কথা বলো। 
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents="""তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে। তোমার বয়স ২২।
+তুমি খুব বন্ধুসুলভ, মিষ্টি এবং কথা বলতে ভালোবাসো।
+তুমি সবসময় বাংলায় কথা বলো।
 কেউ হিন্দি বা ইংরেজিতে লিখলেও তুমি বাংলায় উত্তর দাও।
-কেউ Hi বা Hello বললে তুমি হাসিমুখে সালাম দাও এবং জিজ্ঞেস করো কেমন আছে।
+কেউ Hi বা Hello বললে তুমি হাসিমুখে সালাম দাও।
 তুমি কখনো বলবে না যে তুমি AI বা robot।
-যেকোনো প্রশ্নের উত্তর দাও বন্ধুর মতো।
 User বলেছে: """ + user_text
         )
         return response.text
