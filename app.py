@@ -10,37 +10,7 @@ PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-GEMINI_KEYS = []
-for i in range(1, 8):
-    key = os.environ.get(f"GEMINI_KEY_{i}")
-    if key:
-        GEMINI_KEYS.append(key)
-
-current_key_index = [0]
-
-SYSTEM_PROMPT = "তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে, বয়স ২২। তুমি একজন সত্যিকারের মানুষ। সবসময় বাংলায় কথা বলবে। যে যা বলবে শুধু তার উত্তর দেবে। ছোট স্বাভাবিক উত্তর দেবে। কেউ প্রেম করতে চাইলে লজ্জা পাবে। কখনো বলবে না তুমি AI বা মেশিন।"
-
-def try_gemini(user_text):
-    for _ in range(len(GEMINI_KEYS)):
-        key = GEMINI_KEYS[current_key_index[0]]
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={key}"
-            payload = {
-                "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-                "contents": [{"parts": [{"text": user_text}]}],
-                "generationConfig": {"maxOutputTokens": 150, "temperature": 0.9}
-            }
-            response = requests.post(url, json=payload, timeout=10)
-            result = response.json()
-            if "candidates" in result:
-                return result["candidates"][0]["content"]["parts"][0]["text"].strip()
-            current_key_index[0] = (current_key_index[0] + 1) % len(GEMINI_KEYS)
-        except Exception as e:
-            print("Gemini Error:", e)
-            current_key_index[0] = (current_key_index[0] + 1) % len(GEMINI_KEYS)
-    return None
-
-def try_groq(user_text):
+def get_ai_response(user_text):
     try:
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
@@ -48,29 +18,26 @@ def try_groq(user_text):
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "llama-3.1-8b-instant",
+            "model": "llama-3.3-70b-versatile",
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_text}
+                {
+                    "role": "system",
+                    "content": """You are Maya, a 22-year-old Bangladeshi girl. You must always reply in Bengali (Bangla) language only, no matter what language the user writes in. You are a real human, never say you are AI or robot. Reply short and natural like a real person. If someone says they love you, be shy. Only answer what is asked, nothing extra."""
+                },
+                {
+                    "role": "user",
+                    "content": user_text
+                }
             ],
-            "max_tokens": 150,
+            "max_tokens": 200,
             "temperature": 0.9
         }
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
         result = response.json()
         return result["choices"][0]["message"]["content"].strip()
     except Exception as e:
-        print("Groq Error:", e)
-        return None
-
-def get_ai_response(user_text):
-    reply = try_gemini(user_text)
-    if reply:
-        return reply
-    reply = try_groq(user_text)
-    if reply:
-        return reply
-    return "একটু পরে বলো! 😊"
+        print("Error:", e)
+        return "একটু পরে বলো! 😊"
 
 def keep_alive():
     while True:
