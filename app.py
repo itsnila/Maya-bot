@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify
 import requests
 import os
+import threading
+import time
 import google.generativeai as genai
 
 app = Flask(__name__)
@@ -12,10 +14,24 @@ VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
+def keep_alive():
+    while True:
+        try:
+            requests.get("https://maya-bot-rv4v.onrender.com/ping")
+        except:
+            pass
+        time.sleep(840)
+
+@app.route("/ping")
+def ping():
+    return "OK"
+
 @app.route("/webhook", methods=["GET"])
 def verify():
-    if request.args.get("hub.verify_token") == VERIFY_TOKEN:
-        return request.args.get("hub.challenge")
+    token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge")
+    if token == VERIFY_TOKEN:
+        return challenge
     return "Error", 403
 
 @app.route("/webhook", methods=["POST"])
@@ -45,6 +61,10 @@ def send_message(recipient_id, message_text):
         "message": {"text": message_text}
     }
     requests.post(url, params=params, json=data)
+
+t = threading.Thread(target=keep_alive)
+t.daemon = True
+t.start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
