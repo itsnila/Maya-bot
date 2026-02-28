@@ -29,16 +29,16 @@ def webhook():
                     user_text = event["message"]["text"]
                     try:
                         response = model.generate_content(
-                            f"তুমি একজন বন্ধুসুলভ AI। বাংলায় উত্তর দাও। User বলেছে: {user_text}"
+                            "তুমি একজন বন্ধুসুলভ AI। বাংলায় উত্তর দাও। User বলেছে: " + user_text
                         )
                         reply = response.text
-                    except:
+                    except Exception:
                         reply = "দুঃখিত, এখন উত্তর দিতে পারছি না।"
                     send_message(sender_id, reply)
     return jsonify({"status": "ok"})
 
 def send_message(recipient_id, message_text):
-    url = f"https://graph.facebook.com/v18.0/me/messages"
+    url = "https://graph.facebook.com/v18.0/me/messages"
     params = {"access_token": PAGE_ACCESS_TOKEN}
     data = {
         "recipient": {"id": recipient_id},
@@ -47,4 +47,5 @@ def send_message(recipient_id, message_text):
     requests.post(url, params=params, json=data)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.g
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
