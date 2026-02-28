@@ -18,7 +18,7 @@ def get_ai_response(user_text):
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "mistralai/mistral-7b-instruct:free",
+            "model": "meta-llama/llama-3.2-3b-instruct:free",
             "messages": [
                 {
                     "role": "system",
