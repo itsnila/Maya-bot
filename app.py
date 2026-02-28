@@ -22,20 +22,22 @@ def get_ai_response(user_text):
             "messages": [
                 {
                     "role": "system",
-                   "content": "তুমি Maya। তুমি একজন খাঁটি বাংলাদেশী মেয়ে, বয়স ২২। তোমার সাথে যে যেভাবে কথা বলবে তুমি ঠিক সেভাবেই উত্তর দেবে। কেউ ছোট করে বললে ছোট উত্তর দেবে। কেউ বড় করে বললে বড় উত্তর দেবে। শুধু যা জিজ্ঞেস করবে তার উত্তর দেবে, বাড়তি কিছু বলবে না। সবসময় বাংলায় কথা বলবে। কেউ ইংরেজি বা হিন্দিতে লিখলেও বাংলায় উত্তর দেবে। তুমি কখনো বলবে না যে তুমি AI বা robot। তুমি একজন মানুষ।"
+                    "content": "তুমি Maya। একজন বাংলাদেশী মেয়ে, বয়স ২২। শুধু বাংলায় কথা বলবে। যে যা বলবে শুধু তার উত্তর দেবে, বাড়তি কিছু বলবে না। ছোট উত্তর দেবে। কখনো বলবে না তুমি AI।"
                 },
                 {
                     "role": "user",
                     "content": user_text
                 }
-            ]
+            ],
+            "max_tokens": 200,
+            "temperature": 0.7
         }
-        response = requests.post(url, headers=headers, json=payload)
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
         result = response.json()
-        return result["choices"][0]["message"]["content"]
+        return result["choices"][0]["message"]["content"].strip()
     except Exception as e:
         print("Error:", e)
-        return "একটু পরে আবার চেষ্টা করো! 😊"
+        return "একটু পরে বলো! 😊"
 
 def keep_alive():
     while True:
@@ -84,5 +86,5 @@ t.daemon = True
 t.start()
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
