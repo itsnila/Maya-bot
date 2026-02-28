@@ -16,7 +16,7 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 def get_gemini_response(user_text):
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            "model": "gemini-2.0-flash-lite",
             contents="""তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে। তোমার বয়স ২২।
 তুমি খুব বন্ধুসুলভ, মিষ্টি এবং কথা বলতে ভালোবাসো।
 তুমি সবসময় বাংলায় কথা বলো।
