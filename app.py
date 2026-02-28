@@ -22,7 +22,7 @@ def get_ai_response(user_text):
     for _ in range(len(GEMINI_KEYS)):
         key = GEMINI_KEYS[current_key_index[0]]
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={key}"
             payload = {
                 "system_instruction": {
                     "parts": [{
