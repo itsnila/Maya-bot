@@ -8,21 +8,31 @@ app = Flask(__name__)
 
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
-def get_gemini_response(user_text):
+def get_ai_response(user_text):
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=" + GEMINI_API_KEY
-        payload = {
-            "contents": [{
-                "parts": [{
-                    "text": "তুমি Maya। বাংলাদেশী মেয়ে, বয়স ২২। বন্ধুসুলভ, মিষ্টি। সবসময় বাংলায় কথা বলো। কখনো বলবে না তুমি AI। User বলেছে: " + user_text
-                }]
-            }]
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {
+            "Authorization": "Bearer " + OPENROUTER_API_KEY,
+            "Content-Type": "application/json"
         }
-        response = requests.post(url, json=payload)
+        payload = {
+            "model": "mistralai/mistral-7b-instruct:free",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে। তোমার বয়স ২২। তুমি খুব বন্ধুসুলভ, মিষ্টি এবং কথা বলতে ভালোবাসো। তুমি সবসময় বাংলায় কথা বলো। কেউ ইংরেজি বা হিন্দিতে লিখলেও বাংলায় উত্তর দাও। তুমি কখনো বলবে না যে তুমি AI বা robot।"
+                },
+                {
+                    "role": "user",
+                    "content": user_text
+                }
+            ]
+        }
+        response = requests.post(url, headers=headers, json=payload)
         result = response.json()
-        return result["candidates"][0]["content"]["parts"][0]["text"]
+        return result["choices"][0]["message"]["content"]
     except Exception as e:
         print("Error:", e)
         return "একটু পরে আবার চেষ্টা করো! 😊"
@@ -56,7 +66,7 @@ def webhook():
                 if "message" in event and "text" in event["message"]:
                     sender_id = event["sender"]["id"]
                     user_text = event["message"]["text"]
-                    reply = get_gemini_response(user_text)
+                    reply = get_ai_response(user_text)
                     send_message(sender_id, reply)
     return jsonify({"status": "ok"})
 
