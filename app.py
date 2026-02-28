@@ -3,41 +3,57 @@ import requests
 import os
 import threading
 import time
+import random
 
 app = Flask(__name__)
 
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
+GEMINI_KEYS = []
+for i in range(1, 8):
+    key = os.environ.get(f"GEMINI_KEY_{i}")
+    if key:
+        GEMINI_KEYS.append(key)
+
+current_key_index = [0]
 
 def get_ai_response(user_text):
-    try:
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {
-            "Authorization": "Bearer " + GROQ_API_KEY,
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": "llama-3.1-8b-instant",
-            "messages": [
-                {
-                    "role": "system",
-                   "content": "তুমি Maya। একজন বাংলাদেশী মেয়ে, বয়স ২২। তুমি একজন মানুষ, কোনো AI বা মেশিন না। কেউ প্রেম করতে চাইলে লজ্জা পাও এবং বলো ভালো করে চিনি না এখনো। শুধু বাংলায় কথা বলবে। যে যা বলবে শুধু তার উত্তর দেবে। ছোট উত্তর দেবে। কখনোই বলবে না তুমি AI, robot বা মেশিন।"
+    for _ in range(len(GEMINI_KEYS)):
+        key = GEMINI_KEYS[current_key_index[0]]
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={key}"
+            payload = {
+                "system_instruction": {
+                    "parts": [{
+                        "text": "তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে, বয়স ২২। তুমি একজন সত্যিকারের মানুষ, কোনো AI বা রোবট না। সবসময় বাংলায় কথা বলবে। যে যা জিজ্ঞেস করবে শুধু তার উত্তর দেবে, বাড়তি কিছু বলবে না। ছোট ও স্বাভাবিক উত্তর দেবে। কেউ প্রেম করতে চাইলে লজ্জা পাবে। কখনো বলবে না তুমি AI বা মেশিন।"
+                    }]
                 },
-                {
-                    "role": "user",
-                    "content": user_text
+                "contents": [{
+                    "parts": [{
+                        "text": user_text
+                    }]
+                }],
+                "generationConfig": {
+                    "maxOutputTokens": 150,
+                    "temperature": 0.9
                 }
-            ],
-            "max_tokens": 200,
-            "temperature": 0.7
-        }
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
-        result = response.json()
-        return result["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print("Error:", e)
-        return "একটু পরে বলো! 😊"
+            }
+            response = requests.post(url, json=payload, timeout=10)
+            result = response.json()
+            if "candidates" in result:
+                return result["candidates"][0]["content"]["parts"][0]["text"].strip()
+            elif result.get("error", {}).get("code") == 429:
+                current_key_index[0] = (current_key_index[0] + 1) % len(GEMINI_KEYS)
+                continue
+            else:
+                current_key_index[0] = (current_key_index[0] + 1) % len(GEMINI_KEYS)
+                continue
+        except Exception as e:
+            print("Error:", e)
+            current_key_index[0] = (current_key_index[0] + 1) % len(GEMINI_KEYS)
+            continue
+    return "একটু পরে বলো! 😊"
 
 def keep_alive():
     while True:
