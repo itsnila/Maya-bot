@@ -3,12 +3,12 @@ import requests
 import os
 import threading
 import time
-import random
 
 app = Flask(__name__)
 
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 GEMINI_KEYS = []
 for i in range(1, 8):
@@ -18,41 +18,58 @@ for i in range(1, 8):
 
 current_key_index = [0]
 
-def get_ai_response(user_text):
+SYSTEM_PROMPT = "তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে, বয়স ২২। তুমি একজন সত্যিকারের মানুষ। সবসময় বাংলায় কথা বলবে। যে যা বলবে শুধু তার উত্তর দেবে। ছোট স্বাভাবিক উত্তর দেবে। কেউ প্রেম করতে চাইলে লজ্জা পাবে। কখনো বলবে না তুমি AI বা মেশিন।"
+
+def try_gemini(user_text):
     for _ in range(len(GEMINI_KEYS)):
         key = GEMINI_KEYS[current_key_index[0]]
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={key}"
             payload = {
-                "system_instruction": {
-                    "parts": [{
-                        "text": "তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে, বয়স ২২। তুমি একজন সত্যিকারের মানুষ, কোনো AI বা রোবট না। সবসময় বাংলায় কথা বলবে। যে যা জিজ্ঞেস করবে শুধু তার উত্তর দেবে, বাড়তি কিছু বলবে না। ছোট ও স্বাভাবিক উত্তর দেবে। কেউ প্রেম করতে চাইলে লজ্জা পাবে। কখনো বলবে না তুমি AI বা মেশিন।"
-                    }]
-                },
-                "contents": [{
-                    "parts": [{
-                        "text": user_text
-                    }]
-                }],
-                "generationConfig": {
-                    "maxOutputTokens": 150,
-                    "temperature": 0.9
-                }
+                "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+                "contents": [{"parts": [{"text": user_text}]}],
+                "generationConfig": {"maxOutputTokens": 150, "temperature": 0.9}
             }
             response = requests.post(url, json=payload, timeout=10)
             result = response.json()
             if "candidates" in result:
                 return result["candidates"][0]["content"]["parts"][0]["text"].strip()
-            elif result.get("error", {}).get("code") == 429:
-                current_key_index[0] = (current_key_index[0] + 1) % len(GEMINI_KEYS)
-                continue
-            else:
-                current_key_index[0] = (current_key_index[0] + 1) % len(GEMINI_KEYS)
-                continue
-        except Exception as e:
-            print("Error:", e)
             current_key_index[0] = (current_key_index[0] + 1) % len(GEMINI_KEYS)
-            continue
+        except Exception as e:
+            print("Gemini Error:", e)
+            current_key_index[0] = (current_key_index[0] + 1) % len(GEMINI_KEYS)
+    return None
+
+def try_groq(user_text):
+    try:
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": "Bearer " + GROQ_API_KEY,
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "llama-3.1-8b-instant",
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_text}
+            ],
+            "max_tokens": 150,
+            "temperature": 0.9
+        }
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        result = response.json()
+        return result["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print("Groq Error:", e)
+        return None
+
+def get_ai_response(user_text):
+    reply = try_gemini(user_text)
+    if reply:
+        return reply
+    reply = try_groq(user_text)
+    if reply:
+        return reply
     return "একটু পরে বলো! 😊"
 
 def keep_alive():
