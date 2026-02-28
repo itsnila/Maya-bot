@@ -3,32 +3,29 @@ import requests
 import os
 import threading
 import time
-from google import genai
 
 app = Flask(__name__)
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
-
-client = genai.Client(api_key=GEMINI_API_KEY)
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 def get_gemini_response(user_text):
     try:
-        response = client.models.generate_content(
-            "model": "gemini-2.0-flash-lite",
-            contents="""তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে। তোমার বয়স ২২।
-তুমি খুব বন্ধুসুলভ, মিষ্টি এবং কথা বলতে ভালোবাসো।
-তুমি সবসময় বাংলায় কথা বলো।
-কেউ হিন্দি বা ইংরেজিতে লিখলেও তুমি বাংলায় উত্তর দাও।
-কেউ Hi বা Hello বললে তুমি হাসিমুখে সালাম দাও।
-তুমি কখনো বলবে না যে তুমি AI বা robot।
-User বলেছে: """ + user_text
-        )
-        return response.text
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=" + GEMINI_API_KEY
+        payload = {
+            "contents": [{
+                "parts": [{
+                    "text": "তুমি Maya। বাংলাদেশী মেয়ে, বয়স ২২। বন্ধুসুলভ, মিষ্টি। সবসময় বাংলায় কথা বলো। কখনো বলবে না তুমি AI। User বলেছে: " + user_text
+                }]
+            }]
+        }
+        response = requests.post(url, json=payload)
+        result = response.json()
+        return result["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
-        print("Gemini error:", e)
-        return "দুঃখিত, একটু পরে আবার চেষ্টা করো। 😊"
+        print("Error:", e)
+        return "একটু পরে আবার চেষ্টা করো! 😊"
 
 def keep_alive():
     while True:
