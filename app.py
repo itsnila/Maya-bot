@@ -8,17 +8,17 @@ app = Flask(__name__)
 
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 def get_ai_response(user_text):
     try:
-        url = "https://openrouter.ai/api/v1/chat/completions"
+        url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
-            "Authorization": "Bearer " + OPENROUTER_API_KEY,
+            "Authorization": "Bearer " + GROQ_API_KEY,
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "meta-llama/llama-3.2-3b-instruct:free",
+            "model": "llama-3.1-8b-instant",
             "messages": [
                 {
                     "role": "system",
