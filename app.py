@@ -12,7 +12,17 @@ PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+
+def get_gemini_response(user_text):
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(
+            "তুমি Maya। একজন বন্ধুসুলভ মেয়ে। বাংলায় কথা বলো। User বলেছে: " + user_text
+        )
+        return response.text
+    except Exception as e:
+        print("Gemini error:", e)
+        return "দুঃখিত, একটু পরে আবার চেষ্টা করো।"
 
 def keep_alive():
     while True:
@@ -43,13 +53,7 @@ def webhook():
                 if "message" in event and "text" in event["message"]:
                     sender_id = event["sender"]["id"]
                     user_text = event["message"]["text"]
-                    try:
-                        response = model.generate_content(
-                            "তুমি একজন বন্ধুসুলভ AI। বাংলায় উত্তর দাও। User বলেছে: " + user_text
-                        )
-                        reply = response.text
-                    except Exception:
-                        reply = "দুঃখিত, এখন উত্তর দিতে পারছি না।"
+                    reply = get_gemini_response(user_text)
                     send_message(sender_id, reply)
     return jsonify({"status": "ok"})
 
