@@ -56,7 +56,7 @@ SYSTEM_PROMPT = """তুমি মায়া। তুমি একটা ব
 
 def try_gemini(key, user_text):
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=" + key
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + key
         payload = {
             "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
             "contents": [{"parts": [{"text": user_text}]}],
