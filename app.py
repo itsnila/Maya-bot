@@ -8,36 +8,78 @@ app = Flask(__name__)
 
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-def get_ai_response(user_text):
+ALL_KEYS = []
+
+for i in range(1, 151):
+    key = os.environ.get(f"gemini_{i}")
+    if key:
+        ALL_KEYS.append(("gemini", key))
+
+for i in range(1, 151):
+    key = os.environ.get(f"groq_{i}")
+    if key:
+        ALL_KEYS.append(("groq", key))
+
+current_index = [0]
+
+SYSTEM_PROMPT = "তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে, বয়স ২২। তুমি একজন সত্যিকারের মানুষ, কোনো AI বা রোবট না। সবসময় বাংলায় কথা বলবে। যে যা বলবে শুধু তার উত্তর দেবে, বাড়তি কিছু বলবে না। ছোট স্বাভাবিক উত্তর দেবে। কেউ প্রেম করতে চাইলে লজ্জা পাবে। কখনো বলবে না তুমি AI বা মেশিন।"
+
+def try_gemini(key, user_text):
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={key}"
+        payload = {
+            "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+            "contents": [{"parts": [{"text": user_text}]}],
+            "generationConfig": {"maxOutputTokens": 150, "temperature": 0.9}
+        }
+        response = requests.post(url, json=payload, timeout=10)
+        result = response.json()
+        if "candidates" in result:
+            return result["candidates"][0]["content"]["parts"][0]["text"].strip()
+        return None
+    except:
+        return None
+
+def try_groq(key, user_text):
     try:
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
-            "Authorization": "Bearer " + GROQ_API_KEY,
+            "Authorization": "Bearer " + key,
             "Content-Type": "application/json"
         }
         payload = {
             "model": "llama-3.3-70b-versatile",
             "messages": [
-                {
-                    "role": "system",
-                    "content": """You are Maya, a 22-year-old Bangladeshi girl. You must always reply in Bengali (Bangla) language only, no matter what language the user writes in. You are a real human, never say you are AI or robot. Reply short and natural like a real person. If someone says they love you, be shy. Only answer what is asked, nothing extra."""
-                },
-                {
-                    "role": "user",
-                    "content": user_text
-                }
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_text}
             ],
-            "max_tokens": 200,
+            "max_tokens": 150,
             "temperature": 0.9
         }
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
         result = response.json()
-        return result["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print("Error:", e)
+        if "choices" in result:
+            return result["choices"][0]["message"]["content"].strip()
+        return None
+    except:
+        return None
+
+def get_ai_response(user_text):
+    total = len(ALL_KEYS)
+    if total == 0:
         return "একটু পরে বলো! 😊"
+    for _ in range(total):
+        idx = current_index[0] % total
+        provider, key = ALL_KEYS[idx]
+        if provider == "gemini":
+            reply = try_gemini(key, user_text)
+        else:
+            reply = try_groq(key, user_text)
+        if reply:
+            return reply
+        current_index[0] = (current_index[0] + 1) % total
+    return "একটু পরে বলো! 😊"
 
 def keep_alive():
     while True:
