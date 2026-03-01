@@ -37,11 +37,11 @@ def try_gemini(key, user_text):
         }
         response = requests.post(url, json=payload, timeout=10)
         result = response.json()
-        print("Gemini result: " + str(result)[:200])
-        if "candidates" not in result:
-            print("Gemini no candidates: " + str(result)[:300])
+        print("Gemini result: " + str(result)[:300])
         if "candidates" in result:
             return result["candidates"][0]["content"]["parts"][0]["text"].strip()
+        else:
+            print("Gemini no candidates: " + str(result)[:300])
     except Exception as e:
         print("Gemini Error: " + str(e))
     return None
@@ -65,9 +65,11 @@ def try_groq(key, user_text):
         }
         response = requests.post(url, headers=headers, json=payload, timeout=10)
         result = response.json()
-        print("Groq result: " + str(result)[:200])
+        print("Groq result: " + str(result)[:300])
         if "choices" in result:
             return result["choices"][0]["message"]["content"].strip()
+        else:
+            print("Groq no choices: " + str(result)[:300])
     except Exception as e:
         print("Groq Error: " + str(e))
     return None
@@ -90,14 +92,10 @@ def get_ai_response(user_text):
             reply = try_groq(key, user_text)
         if reply:
             current_index[0] = (idx + 1) % total
+            print("Got reply from: " + provider)
             return reply
+    print("All keys failed!")
     return "একটু পরে বলো!"
-
-
-def process_and_reply(sender_id, user_text):
-    """Background thread এ AI reply পাঠায়"""
-    reply = get_ai_response(user_text)
-    send_message(sender_id, reply)
 
 
 @app.route("/")
@@ -128,9 +126,9 @@ def webhook():
                 if "message" in event and "text" in event.get("message", {}):
                     sender_id = event["sender"]["id"]
                     user_text = event["message"]["text"]
-                    # Background thread এ পাঠাও — Facebook timeout এড়াতে
-                    t = threading.Thread(target=process_and_reply, args=(sender_id, user_text), daemon=True)
-                    t.start()
+                    print("Received message: " + user_text[:50])
+                    reply = get_ai_response(user_text)
+                    send_message(sender_id, reply)
     return jsonify({"status": "ok"}), 200
 
 
@@ -145,6 +143,8 @@ def send_message(recipient_id, message_text):
         }
         response = requests.post(url, params=params, json=data, timeout=10)
         print("Send message status: " + str(response.status_code))
+        if response.status_code != 200:
+            print("Send message error body: " + response.text[:200])
     except Exception as e:
         print("Send message Error: " + str(e))
 
