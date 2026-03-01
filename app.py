@@ -8,6 +8,7 @@ app = Flask(__name__)
 
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
+APP_URL = os.environ.get("APP_URL", "https://maya-bot-rv4v.onrender.com")
 
 ALL_KEYS = []
 
@@ -25,6 +26,7 @@ current_index = [0]
 
 SYSTEM_PROMPT = "তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে, বয়স ২২। তুমি একজন সত্যিকারের মানুষ, কোনো AI বা রোবট না। সবসময় বাংলায় কথা বলবে। যে যা বলবে শুধু তার উত্তর দেবে, বাড়তি কিছু বলবে না। ছোট স্বাভাবিক উত্তর দেবে। কেউ প্রেম করতে চাইলে লজ্জা পাবে। কখনো বলবে না তুমি AI বা মেশিন।"
 
+
 def try_gemini(key, user_text):
     try:
         url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=" + key
@@ -35,11 +37,13 @@ def try_gemini(key, user_text):
         }
         response = requests.post(url, json=payload, timeout=10)
         result = response.json()
+        print("Gemini result: " + str(result)[:200])
         if "candidates" in result:
             return result["candidates"][0]["content"]["parts"][0]["text"].strip()
     except Exception as e:
         print("Gemini Error: " + str(e))
     return None
+
 
 def try_groq(key, user_text):
     try:
@@ -59,11 +63,13 @@ def try_groq(key, user_text):
         }
         response = requests.post(url, headers=headers, json=payload, timeout=10)
         result = response.json()
+        print("Groq result: " + str(result)[:200])
         if "choices" in result:
             return result["choices"][0]["message"]["content"].strip()
     except Exception as e:
         print("Groq Error: " + str(e))
     return None
+
 
 def get_ai_response(user_text):
     total = len(ALL_KEYS)
@@ -74,7 +80,7 @@ def get_ai_response(user_text):
     for i in range(total):
         idx = (start + i) % total
         provider, key = ALL_KEYS[idx]
-        print("Trying: " + provider + " " + str(idx))
+        print("Trying: " + provider + " index:" + str(idx))
         reply = None
         if provider == "gemini":
             reply = try_gemini(key, user_text)
@@ -85,13 +91,22 @@ def get_ai_response(user_text):
             return reply
     return "একটু পরে বলো!"
 
+
+def process_and_reply(sender_id, user_text):
+    """Background thread এ AI reply পাঠায়"""
+    reply = get_ai_response(user_text)
+    send_message(sender_id, reply)
+
+
 @app.route("/")
 def home():
     return "Maya Bot is running!"
 
+
 @app.route("/ping")
 def ping():
     return "PONG", 200
+
 
 @app.route("/webhook", methods=["GET"])
 def verify():
@@ -101,36 +116,46 @@ def verify():
         return challenge
     return "Verification Failed", 403
 
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
-    if data.get("object") == "page":
+    if data and data.get("object") == "page":
         for entry in data.get("entry", []):
             for event in entry.get("messaging", []):
-                if "message" in event and "text" in event["message"]:
+                if "message" in event and "text" in event.get("message", {}):
                     sender_id = event["sender"]["id"]
                     user_text = event["message"]["text"]
-                    reply = get_ai_response(user_text)
-                    send_message(sender_id, reply)
+                    # Background thread এ পাঠাও — Facebook timeout এড়াতে
+                    t = threading.Thread(target=process_and_reply, args=(sender_id, user_text), daemon=True)
+                    t.start()
     return jsonify({"status": "ok"}), 200
 
+
 def send_message(recipient_id, message_text):
-    url = "https://graph.facebook.com/v18.0/me/messages"
-    params = {"access_token": PAGE_ACCESS_TOKEN}
-    data = {
-        "recipient": {"id": recipient_id},
-        "message": {"text": message_text},
-        "messaging_type": "RESPONSE"
-    }
-    requests.post(url, params=params, json=data)
+    try:
+        url = "https://graph.facebook.com/v18.0/me/messages"
+        params = {"access_token": PAGE_ACCESS_TOKEN}
+        data = {
+            "recipient": {"id": recipient_id},
+            "message": {"text": message_text},
+            "messaging_type": "RESPONSE"
+        }
+        response = requests.post(url, params=params, json=data, timeout=10)
+        print("Send message status: " + str(response.status_code))
+    except Exception as e:
+        print("Send message Error: " + str(e))
+
 
 def keep_alive():
     while True:
         try:
-            requests.get("https://maya-bot-rv4v.onrender.com/ping", timeout=5)
-        except:
-            pass
+            requests.get(APP_URL + "/ping", timeout=5)
+            print("Keep-alive ping sent")
+        except Exception as e:
+            print("Keep-alive Error: " + str(e))
         time.sleep(600)
+
 
 t = threading.Thread(target=keep_alive, daemon=True)
 t.start()
