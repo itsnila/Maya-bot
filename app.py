@@ -1,53 +1,63 @@
-from flask import Flask, request, jsonify
-import requests
 import os
-import threading
 import time
+import threading
+import requests
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
+# --- Configuration ---
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
 
 ALL_KEYS = []
 
+# Gemini Keys (1-100)
 for i in range(1, 101):
-    key = os.environ.get("GEMINI_KEY_" + str(i))
+    key = os.environ.get(f"GEMINI_KEY_{i}")
     if key:
         ALL_KEYS.append(("gemini", key))
 
+# Groq Keys (1-100)
 for i in range(1, 101):
-    key = os.environ.get("GROQ_KEY_" + str(i))
+    key = os.environ.get(f"GROQ_KEY_{i}")
     if key:
         ALL_KEYS.append(("groq", key))
 
+# To keep track of the key index
 current_index = [0]
 
-SYSTEM_PROMPT = "তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে, বয়স ২২। তুমি একজন সত্যিকারের মানুষ, কোনো AI বা রোবট না। সবসময় বাংলায় কথা বলবে। যে যা বলবে শুধু তার উত্তর দেবে, বাড়তি কিছু বলবে না। ছোট স্বাভাবিক উত্তর দেবে। কেউ প্রেম করতে চাইলে লজ্জা পাবে। কখনো বলবে না তুমি AI বা মেশিন।"
+SYSTEM_PROMPT = (
+    "তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে, বয়স ২২। "
+    "তুমি একজন সত্যিকারের মানুষ, কোনো AI বা রোবট না। "
+    "সবসময় বাংলায় কথা বলবে। যে যা বলবে শুধু তার উত্তর দেবে, "
+    "বাড়তি কিছু বলবে না। ছোট স্বাভাবিক উত্তর দেবে। "
+    "কেউ প্রেম করতে চাইলে লজ্জা পাবে। কখনো বলবে না তুমি AI বা মেশিন।"
+)
 
+# --- AI Models Logic ---
 
 def try_gemini(key, user_text):
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=" + key
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={key}"
         payload = {
             "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
             "contents": [{"parts": [{"text": user_text}]}],
-            "generationConfig": {"maxOutputTokens": 150, "temperature": 0.9}
+            "generationConfig": {"maxOutputTokens": 150, "temperature": 0.8}
         }
-        response = requests.post(url, json=payload, timeout=8)
+        response = requests.post(url, json=payload, timeout=10)
         result = response.json()
         if "candidates" in result:
             return result["candidates"][0]["content"]["parts"][0]["text"].strip()
-        return None
-    except:
-        return None
-
+    except Exception as e:
+        print(f"Gemini Error: {e}")
+    return None
 
 def try_groq(key, user_text):
     try:
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
-            "Authorization": "Bearer " + key,
+            "Authorization": f"Bearer {key}",
             "Content-Type": "application/json"
         }
         payload = {
@@ -57,92 +67,102 @@ def try_groq(key, user_text):
                 {"role": "user", "content": user_text}
             ],
             "max_tokens": 150,
-            "temperature": 0.9
+            "temperature": 0.8
         }
-        response = requests.post(url, headers=headers, json=payload, timeout=8)
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
         result = response.json()
         if "choices" in result:
             return result["choices"][0]["message"]["content"].strip()
-        return None
-    except:
-        return None
-
+    except Exception as e:
+        print(f"Groq Error: {e}")
+    return None
 
 def get_ai_response(user_text):
     total = len(ALL_KEYS)
-    print("Total keys:", total)
     if total == 0:
-        return "একটু পরে বলো!"
-    start = current_index[0] % total
+        return "একটু পরে বলো, আমি এখন ব্যস্ত আছি!"
+
+    start = current_index[0]
     for i in range(total):
         idx = (start + i) % total
         provider, key = ALL_KEYS[idx]
-        print("Trying:", provider, idx)
-        try:
-            if provider == "gemini":
-                reply = try_gemini(key, user_text)
-            else:
-                reply = try_groq(key, user_text)
-            if reply:
-                current_index[0] = idx
-                return reply
-        except:
-            continue
-    current_index[0] = (current_index[0] + 1) % total
-    return "একটু পরে বলো!"
+        
+        reply = None
+        if provider == "gemini":
+            reply = try_gemini(key, user_text)
+        else:
+            reply = try_groq(key, user_text)
+            
+        if reply:
+            # Update index for the next request to rotate keys
+            current_index[0] = (idx + 1) % total
+            return reply
+            
+    return "একটু পরে কথা বলি? মাথাটা ধরেছে।"
 
-
-def keep_alive():
-    while True:
-        try:
-            requests.get("https://maya-bot-rv4v.onrender.com/ping")
-        except:
-            pass
-        time.sleep(840)
-
-
-@app.route("/ping")
-def ping():
-    return "OK"
-
+# --- Facebook Messenger Logic ---
 
 @app.route("/webhook", methods=["GET"])
 def verify():
+    # Verify Token check for Facebook Webhook
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
     if token == VERIFY_TOKEN:
         return challenge
-    return "Error", 403
-
+    return "Verification Failed", 403
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
     if data.get("object") == "page":
-        for entry in data["entry"]:
+        for entry in data.get("entry", []):
             for event in entry.get("messaging", []):
                 if "message" in event and "text" in event["message"]:
                     sender_id = event["sender"]["id"]
                     user_text = event["message"]["text"]
+                    
+                    # Get AI Response
                     reply = get_ai_response(user_text)
+                    
+                    # Send response back to Messenger
                     send_message(sender_id, reply)
-    return jsonify({"status": "ok"})
-
+    return jsonify({"status": "ok"}), 200
 
 def send_message(recipient_id, message_text):
     url = "https://graph.facebook.com/v18.0/me/messages"
     params = {"access_token": PAGE_ACCESS_TOKEN}
     data = {
         "recipient": {"id": recipient_id},
-        "message": {"text": message_text}
+        "message": {"text": message_text},
+        "messaging_type": "RESPONSE"
     }
     requests.post(url, params=params, json=data)
 
+# --- Keep Alive & Routes ---
 
-t = threading.Thread(target=keep_alive)
-t.daemon = True
-t.start()
+@app.route("/")
+def home():
+    return "Maya Bot is running!"
+
+@app.route("/ping")
+def ping():
+    return "PONG", 200
+
+def keep_alive():
+    while True:
+        try:
+            # Change this URL to your actual Render/Deployment URL
+            requests.get("https://maya-bot-rv4v.onrender.com/ping", timeout=5)
+        except:
+            pass
+        time.sleep(600) # Every 10 minutes
+
+# --- Execution ---
 
 if __name__ == "__main__":
+    # Start Keep Alive thread
+    t = threading.Thread(target=keep_alive, daemon=True)
+    t.start()
+    
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
