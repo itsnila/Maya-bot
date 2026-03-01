@@ -38,6 +38,8 @@ def try_gemini(key, user_text):
         response = requests.post(url, json=payload, timeout=10)
         result = response.json()
         print("Gemini result: " + str(result)[:200])
+        if "candidates" not in result:
+            print("Gemini no candidates: " + str(result)[:300])
         if "candidates" in result:
             return result["candidates"][0]["content"]["parts"][0]["text"].strip()
     except Exception as e:
