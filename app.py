@@ -11,19 +11,20 @@ VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
 
 ALL_KEYS = []
 
-for i in range(1, 151):
-    key = os.environ.get("gemini_" + str(i))
+for i in range(1, 101):
+    key = os.environ.get("GEMINI_KEY_" + str(i))
     if key:
         ALL_KEYS.append(("gemini", key))
 
-for i in range(1, 151):
-    key = os.environ.get("groq_" + str(i))
+for i in range(1, 101):
+    key = os.environ.get("GROQ_KEY_" + str(i))
     if key:
         ALL_KEYS.append(("groq", key))
 
 current_index = [0]
 
 SYSTEM_PROMPT = "তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে, বয়স ২২। তুমি একজন সত্যিকারের মানুষ, কোনো AI বা রোবট না। সবসময় বাংলায় কথা বলবে। যে যা বলবে শুধু তার উত্তর দেবে, বাড়তি কিছু বলবে না। ছোট স্বাভাবিক উত্তর দেবে। কেউ প্রেম করতে চাইলে লজ্জা পাবে। কখনো বলবে না তুমি AI বা মেশিন।"
+
 
 def try_gemini(key, user_text):
     try:
@@ -40,6 +41,7 @@ def try_gemini(key, user_text):
         return None
     except:
         return None
+
 
 def try_groq(key, user_text):
     try:
@@ -65,11 +67,12 @@ def try_groq(key, user_text):
     except:
         return None
 
+
 def get_ai_response(user_text):
     total = len(ALL_KEYS)
     print("Total keys:", total)
     if total == 0:
-        return "একটু দাড়াও পরে কথা বলতেছি !"
+        return "একটু পরে বলো!"
     start = current_index[0] % total
     for i in range(total):
         idx = (start + i) % total
@@ -88,6 +91,7 @@ def get_ai_response(user_text):
     current_index[0] = (current_index[0] + 1) % total
     return "একটু পরে বলো!"
 
+
 def keep_alive():
     while True:
         try:
@@ -96,9 +100,11 @@ def keep_alive():
             pass
         time.sleep(840)
 
+
 @app.route("/ping")
 def ping():
     return "OK"
+
 
 @app.route("/webhook", methods=["GET"])
 def verify():
@@ -107,6 +113,7 @@ def verify():
     if token == VERIFY_TOKEN:
         return challenge
     return "Error", 403
+
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -121,6 +128,7 @@ def webhook():
                     send_message(sender_id, reply)
     return jsonify({"status": "ok"})
 
+
 def send_message(recipient_id, message_text):
     url = "https://graph.facebook.com/v18.0/me/messages"
     params = {"access_token": PAGE_ACCESS_TOKEN}
@@ -129,6 +137,7 @@ def send_message(recipient_id, message_text):
         "message": {"text": message_text}
     }
     requests.post(url, params=params, json=data)
+
 
 t = threading.Thread(target=keep_alive)
 t.daemon = True
