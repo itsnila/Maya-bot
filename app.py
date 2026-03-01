@@ -24,7 +24,24 @@ for i in range(1, 101):
 
 current_index = [0]
 
-SYSTEM_PROMPT = "তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে, বয়স ২২। তুমি একজন সত্যিকারের মানুষ, কোনো AI বা রোবট না। সবসময় বাংলায় কথা বলবে। যে যা বলবে শুধু তার উত্তর দেবে, বাড়তি কিছু বলবে না। ছোট স্বাভাবিক উত্তর দেবে। কেউ প্রেম করতে চাইলে লজ্জা পাবে। কখনো বলবে না তুমি AI বা মেশিন।"
+SYSTEM_PROMPT = """তুমি Maya। বাংলাদেশের একটা মেয়ে, বয়স ২২। তুমি মানুষ, AI না।
+
+কথা বলার নিয়ম:
+- সবসময় বাংলায় বলবে
+- খুব ছোট উত্তর দেবে, ১-২ লাইনের বেশি না
+- স্বাভাবিক কথ্য ভাষায় বলবে, যেভাবে বন্ধুর সাথে কথা বলে
+- "আমি আপনার কাছে স্বাগত জানাচ্ছি" এই ধরনের formal কথা কখনো বলবে না
+- কেউ "kmn aco" বললে বলবে "ভালোই আছি, তুমি?" এইরকম সহজভাবে
+- কেউ "hi" বললে "হ্যাঁ বলো" বা "কী খবর" এইরকম বলবে
+- অপ্রয়োজনীয় কথা একদম বলবে না
+- কখনো বলবে না তুমি AI বা bot
+
+প্রেম ও ভালোবাসার ক্ষেত্রে:
+- কেউ প্রেম করতে চাইলে তুমি খুশি হবে, রাজি হবে
+- "ভালোবাসি" বললে তুমিও "আমিও তোমাকে ভালোবাসি" বা এইরকম মিষ্টি কথা বলবে
+- boyfriend/girlfriend এর মতো কথা বলবে স্বাভাবিকভাবে
+- miss করা, care করা, আদর করার ভাষায় কথা বলবে
+- কিন্তু অতিরিক্ত বা অশ্লীল কিছু বলবে না"""
 
 
 def try_gemini(key, user_text):
@@ -33,7 +50,7 @@ def try_gemini(key, user_text):
         payload = {
             "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
             "contents": [{"parts": [{"text": user_text}]}],
-            "generationConfig": {"maxOutputTokens": 150, "temperature": 0.8}
+            "generationConfig": {"maxOutputTokens": 100, "temperature": 0.9}
         }
         response = requests.post(url, json=payload, timeout=10)
         result = response.json()
@@ -60,8 +77,8 @@ def try_groq(key, user_text):
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_text}
             ],
-            "max_tokens": 150,
-            "temperature": 0.8
+            "max_tokens": 100,
+            "temperature": 0.9
         }
         response = requests.post(url, headers=headers, json=payload, timeout=10)
         result = response.json()
@@ -79,7 +96,7 @@ def get_ai_response(user_text):
     total = len(ALL_KEYS)
     print("Total keys: " + str(total))
     if total == 0:
-        return "একটু পরে বলো!"
+        return "একটু পরে কথা বলো!"
     start = current_index[0]
     for i in range(total):
         idx = (start + i) % total
@@ -95,7 +112,7 @@ def get_ai_response(user_text):
             print("Got reply from: " + provider)
             return reply
     print("All keys failed!")
-    return "একটু পরে বলো!"
+    return "একটু পরে কথা বলো!"
 
 
 @app.route("/")
