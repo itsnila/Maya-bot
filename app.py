@@ -73,7 +73,7 @@ def get_ai_response(user_text):
     total = len(ALL_KEYS)
     print("Total keys:", total)
     if total == 0:
-        return "একটু পরে বলো! 😊"
+        return "একটু পরে বলো!"
     for _ in range(total):
         idx = current_index[0] % total
         provider, key = ALL_KEYS[idx]
@@ -85,7 +85,7 @@ def get_ai_response(user_text):
         if reply:
             return reply
         current_index[0] = (current_index[0] + 1) % total
-    return "একটু পরে বলো! 😊"
+    return "একটু পরে বলো!"
 
 def keep_alive():
     while True:
@@ -113,29 +113,6 @@ def webhook():
     if data.get("object") == "page":
         for entry in data["entry"]:
             for event in entry.get("messaging", []):
-                if "message" in event and "text" in event["message"]:
-                    sender_id = event["sender"]["id"]
-                    user_text = event["message"]["text"]
-                    reply = get_ai_response(user_text)
-                    send_message(sender_id, reply)
-    return jsonify({"status": "ok"})
-
-def send_message(recipient_id, message_text):
-    url = "https://graph.facebook.com/v18.0/me/messages"
-    params = {"access_token": PAGE_ACCESS_TOKEN}
-    data = {
-        "recipient": {"id": recipient_id},
-        "message": {"text": message_text}
-    }
-    requests.post(url, params=params, json=data)
-
-t = threading.Thread(target=keep_alive)
-t.daemon = True
-t.start()
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)            for event in entry.get("messaging", []):
                 if "message" in event and "text" in event["message"]:
                     sender_id = event["sender"]["id"]
                     user_text = event["message"]["text"]
