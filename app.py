@@ -33,14 +33,12 @@ def try_gemini(key, user_text):
             "contents": [{"parts": [{"text": user_text}]}],
             "generationConfig": {"maxOutputTokens": 150, "temperature": 0.9}
         }
-        response = requests.post(url, json=payload, timeout=10)
+        response = requests.post(url, json=payload, timeout=8)
         result = response.json()
         if "candidates" in result:
             return result["candidates"][0]["content"]["parts"][0]["text"].strip()
-        print("Gemini failed:", result)
         return None
-    except Exception as e:
-        print("Gemini error:", e)
+    except:
         return None
 
 def try_groq(key, user_text):
@@ -59,32 +57,35 @@ def try_groq(key, user_text):
             "max_tokens": 150,
             "temperature": 0.9
         }
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response = requests.post(url, headers=headers, json=payload, timeout=8)
         result = response.json()
         if "choices" in result:
             return result["choices"][0]["message"]["content"].strip()
-        print("Groq failed:", result)
         return None
-    except Exception as e:
-        print("Groq error:", e)
+    except:
         return None
 
 def get_ai_response(user_text):
     total = len(ALL_KEYS)
     print("Total keys:", total)
     if total == 0:
-        return "একটু পরে বলো!"
-    for _ in range(total):
-        idx = current_index[0] % total
+        return "একটু দাড়াও পরে কথা বলতেছি !"
+    start = current_index[0] % total
+    for i in range(total):
+        idx = (start + i) % total
         provider, key = ALL_KEYS[idx]
         print("Trying:", provider, idx)
-        if provider == "gemini":
-            reply = try_gemini(key, user_text)
-        else:
-            reply = try_groq(key, user_text)
-        if reply:
-            return reply
-        current_index[0] = (current_index[0] + 1) % total
+        try:
+            if provider == "gemini":
+                reply = try_gemini(key, user_text)
+            else:
+                reply = try_groq(key, user_text)
+            if reply:
+                current_index[0] = idx
+                return reply
+        except:
+            continue
+    current_index[0] = (current_index[0] + 1) % total
     return "একটু পরে বলো!"
 
 def keep_alive():
