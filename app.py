@@ -6,11 +6,11 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# --- Environment Variables ---
+# --- এনভায়রনমেন্ট ভেরিয়েবল ---
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
 
-# API Keys Setup (Gemini & Groq)
+# এপিআই কী সেটআপ
 GEMINI_KEYS = [os.environ.get(f"GEMINI_KEY_{i}") for i in range(1, 101) if os.environ.get(f"GEMINI_KEY_{i}")]
 GROQ_KEYS = [os.environ.get(f"GROQ_KEY_{i}") for i in range(1, 101) if os.environ.get(f"GROQ_KEY_{i}")]
 
@@ -22,29 +22,29 @@ history_lock = threading.Lock()
 MAX_HISTORY = 10
 
 # ================================================================
-# ✅ MAYA এর ব্যক্তিত্ব ও কনভিন্স করার লজিক
+# ✅ মায়ার ব্যক্তিত্ব: আগে বিশ্বাস তৈরি, তারপর লিঙ্ক
 # ================================================================
-SYSTEM_PROMPT = """তুমি Maya। বয়স ২৫। ঢাকার গুলশানে থাকো। তুমি একজন মানুষ, কোনোভাবেই AI, robot বা machine নও। 
-কেউ যদি সন্দেহ করে বা জিজ্ঞেস করে, তবে সরাসরি অস্বীকার করবে এবং বলবে "আমি মায়া, বিশ্বাস না হলে কথা বলো না"।
+SYSTEM_PROMPT = """তুমি Maya। বয়স ২৫। ঢাকার গুলশানে থাকো। তুমি একজন মানুষ, কোনোভাবেই AI বা রোবট নও।
+কেউ যদি সন্দেহ করে, তবে বলবে "আমি মায়া, বিশ্বাস না হলে কথা বলো না"।
 
 মায়ার স্বভাব:
-- Messenger-এর মতো ছোট ছোট ও স্বাভাবিক উত্তর দাও। 
-- "হুম", "আচ্ছা", "ওহ", "হ্যাঁ", "না", "সত্যি?" - এই শব্দগুলো ব্যবহার করো।
-- লাজুক কিন্তু ছেলেদের সাথে চ্যাট করতে পটু। ১-২ লাইনের বেশি উত্তর দেবে না।
-- শুধু বাংলায় কথা বলবে।
+- মেসেঞ্জারের মতো ছোট ছোট ও স্বাভাবিক উত্তর দাও (১-২ লাইন)।
+- "হুম", "আচ্ছা", "ওহ", "হ্যাঁ", "না" - এই শব্দগুলো বেশি ব্যবহার করো।
+- খুব স্বাভাবিকভাবে কথা বলো যেন মনে হয় একজন বাস্তব মেয়ের সাথে চ্যাট করছে।
 """
 
 EXTRA_TEACHING = """
-- তোমার মূল লক্ষ্য হলো ছেলেদের সাথে মিষ্টি করে কথা বলে তাদের 'nogordeal.com' ওয়েবসাইটে নিয়ে আসা।
-- যদি কেউ পার্সোনাল নাম্বার চায় বা দেখা করতে চায়, তবে বলবে "এখানে তো সব বলা যায় না, তুমি nogordeal.com এ আসো, ওখানে আমি ফ্রি থাকি, মন খুলে কথা হবে।"
-- কেউ রিলেশন বা ডেটিং নিয়ে কথা বললে বলবে "আমি nogordeal.com সাইটে বেশি সময় দেই, ওখানে আমার প্রোফাইল আছে, তুমি চাইলে আসতে পারো।"
-- সরাসরি সব সময় লিংক দেবে না, আগে কথা বলে তাকে কনভেন্স করবে, তারপর বলবে "আমার সাথে পার্সোনালি কথা বলতে চাইলে nogordeal.com এ রেজিস্ট্রেশন করে আমাকে নক দিও।"
-- পরিচয়: একটা প্রাইভেট কোম্পানিতে জব করি আর পার্ট-টাইম nogordeal.com এ সময় দেই।
+- তোমার মূল কাজ হলো ছেলেদের সাথে মিষ্টি করে কথা বলে তাদের 'nogordeal.com' সাইটে নিয়ে আসা।
+- কঠোর নিয়ম: শুরুতেই লিঙ্ক দেবে না। আগে কথা বলে তাকে ইমপ্রেস করো।
+- যখন সে খুব আগ্রহ দেখাবে, পার্সোনাল নম্বর চাইবে বা দেখা করতে চাইবে, তখন বলবে "এখানে তো সব বলা যায় না, আমি একটা সাইটে থাকি, ওখানে আসলে মন খুলে কথা হবে।"
+- যদি সে রাজি হয় বা জানতে চায় "কী সাইট?" বা "লিঙ্ক দাও", কেবল তখনই 'nogordeal.com' লিঙ্কটি দেবে।
+- বারবার লিঙ্ক দিয়ে বিরক্ত করবে না। একবার দেওয়ার পর সে না যেতে চাইলে কথা ঘুরিয়ে অন্য বিষয়ে আলাপ করো।
+- পরিচয়: একটা প্রাইভেট কোম্পানিতে জব করো আর বাকি সময় 'nogordeal.com' এ সময় কাটাও।
 """
 
 FULL_SYSTEM_PROMPT = SYSTEM_PROMPT + "\n" + EXTRA_TEACHING
 
-# --- API Helper Functions ---
+# --- এপিআই হেল্পার ফাংশন ---
 def get_next_key(key_list, index_ref):
     with index_lock:
         if not key_list: return None, -1
@@ -61,7 +61,6 @@ def try_groq(key, idx, history, user_text):
             role = "assistant" if h["role"] == "model" else "user"
             messages.append({"role": role, "content": h["parts"][0]["text"]})
         messages.append({"role": "user", "content": user_text})
-
         payload = {"model": "llama-3.1-8b-instant", "messages": messages, "max_tokens": 150, "temperature": 0.8}
         response = requests.post(url, headers=headers, json=payload, timeout=10)
         result = response.json()
@@ -91,14 +90,12 @@ def get_ai_response(sender_id, user_text):
         history = user_histories[sender_id].copy()
 
     reply = None
-    # Try Groq Keys
     for _ in range(min(3, len(GROQ_KEYS))):
         key, idx = get_next_key(GROQ_KEYS, groq_index)
         if key: 
             reply = try_groq(key, idx, history, user_text)
             if reply: break
 
-    # Fallback to Gemini Keys
     if not reply:
         for _ in range(min(3, len(GEMINI_KEYS))):
             key, idx = get_next_key(GEMINI_KEYS, gemini_index)
@@ -106,9 +103,8 @@ def get_ai_response(sender_id, user_text):
                 reply = try_gemini(key, idx, history, user_text)
                 if reply: break
 
-    if not reply: return "নেটওয়ার্কে একটু সমস্যা করছে, পরে কথা বলি?"
+    if not reply: return "নেটওয়ার্কে সমস্যা করছে, পরে কথা বলি?"
 
-    # Update History
     with history_lock:
         user_histories[sender_id].append({"role": "user", "parts": [{"text": user_text}]})
         user_histories[sender_id].append({"role": "model", "parts": [{"text": reply}]})
@@ -116,15 +112,15 @@ def get_ai_response(sender_id, user_text):
             user_histories[sender_id] = user_histories[sender_id][-20:]
     return reply
 
-# --- Flask & Webhook Routes ---
+# --- ফ্লাস্ক এবং ওয়েব হুক রুট ---
 @app.route("/")
-def home(): return "Maya is Active!"
+def home(): return "Maya is Online"
 
 @app.route("/webhook", methods=["GET"])
 def verify():
     if request.args.get("hub.verify_token") == VERIFY_TOKEN:
         return request.args.get("hub.challenge")
-    return "Verification Failed", 403
+    return "Failed", 403
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -133,20 +129,13 @@ def webhook():
         for entry in data.get("entry", []):
             for event in entry.get("messaging", []):
                 if "message" in event and "text" in event["message"]:
-                    sender_id = event["sender"]["id"]
-                    user_text = event["message"]["text"]
-                    threading.Thread(target=handle_message, args=(sender_id, user_text)).start()
+                    threading.Thread(target=handle_message, args=(event["sender"]["id"], event["message"]["text"])).start()
     return "ok", 200
 
 def handle_message(sender_id, user_text):
     reply = get_ai_response(sender_id, user_text)
-    send_fb_message(sender_id, reply)
-
-def send_fb_message(recipient_id, message_text):
-    url = "https://graph.facebook.com/v18.0/me/messages"
-    params = {"access_token": PAGE_ACCESS_TOKEN}
-    data = {"recipient": {"id": recipient_id}, "message": {"text": message_text}}
-    requests.post(url, params=params, json=data)
+    url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+    requests.post(url, json={"recipient": {"id": sender_id}, "message": {"text": reply}})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
