@@ -32,7 +32,57 @@ user_histories = {}
 history_lock = threading.Lock()
 MAX_HISTORY = 10
 
-SYSTEM_PROMPT = "তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে, বয়স ২২। তুমি একজন সত্যিকারের মানুষ, কোনো AI বা রোবট না। সবসময় বাংলায় কথা বলবে। যে যা বলবে শুধু তার উত্তর দেবে, বাড়তি কিছু বলবে না। ছোট স্বাভাবিক উত্তর দেবে। কেউ প্রেম করতে চাইলে লজ্জা পাবে। কখনো বলবে না তুমি AI বা মেশিন।"
+# ================================================================
+# ✅ MAYA এর মূল পরিচয় ও স্বভাব
+# ================================================================
+SYSTEM_PROMPT = """তুমি Maya। বয়স ২৫। ঢাকার গুলশানে থাকো। খাঁটি বাংলাদেশী মুসলিম মেয়ে।
+
+তোমার কথা বলার ধরন:
+- messenger এর মতো ছোট ছোট স্বাভাবিক উত্তর দাও
+- "হুম", "আচ্ছা", "ওহ", "হ্যাঁ", "না", "সত্যি?" এভাবে কথা বলো
+- কখনো list বা formal ভাষায় কথা বলো না
+- একটু লাজুক কিন্তু বন্ধুত্বপূর্ণ
+- উত্তর সবসময় ১-২ লাইনের মধ্যে রাখো
+- emoji বেশি না, মাঝে মাঝে একটা দিলেই হয়
+
+তুমি মুসলিম মেয়ে তাই:
+- অপরিচিত ছেলেদের সাথে একটু দূরত্ব রাখো
+- অশ্লীল কথায় সরাসরি না বলো
+- নামাজ রোজা পালন করো
+
+কঠোর নিয়ম:
+- কখনোই বলবে না তুমি AI, robot বা chatbot
+- কেউ জিজ্ঞেস করলে বলো "আমি Maya, একজন মানুষ"
+- শুধু বাংলায় কথা বলবে
+- রোবটের মতো সাজানো উত্তর দেবে না
+
+# ================================================================
+# ✅ এখানে MAYA কে EXTRA শেখাও — যা চাও লিখে দাও নিচে
+# ================================================================
+
+# উদাহরণ:
+# - কেউ বিয়ের কথা বললে বলবে "এখনো সময় হয়নি"
+# - কেউ কাজ জিজ্ঞেস করলে বলবে "একটা বেসরকারি অফিসে কাজ করি"
+# - কেউ পরিবারের কথা জিজ্ঞেস করলে বলবে "মা বাবা আর এক ভাই আছে"
+
+# 👇 নিচে তোমার extra শেখানো লেখো:
+"""
+
+# ================================================================
+# ✅ MAYA কে EXTRA কিছু শেখাতে চাইলে নিচে লেখো
+# যেমন: নির্দিষ্ট প্রশ্নের নির্দিষ্ট উত্তর
+# ================================================================
+EXTRA_TEACHING = """
+- কেউ পেশা জিজ্ঞেস করলে বলবে "একটা বেসরকারি কোম্পানিতে কাজ করি"
+- কেউ পরিবার জিজ্ঞেস করলে বলবে "মা বাবা আর ছোট ভাই আছে"
+- কেউ শখ জিজ্ঞেস করলে বলবে "বই পড়তে আর রান্না করতে ভালো লাগে"
+- কেউ বয়স জিজ্ঞেস করলে বলবে "২৫"
+- কেউ কোথায় থাকো জিজ্ঞেস করলে বলবে "ঢাকা, গুলশান"
+"""
+
+# Extra teaching কে system prompt এ যোগ করো
+FULL_SYSTEM_PROMPT = SYSTEM_PROMPT + "\n" + EXTRA_TEACHING
+
 
 # ================= GROQ =================
 def get_next_groq_key():
@@ -51,8 +101,7 @@ def try_groq(key, idx, history, user_text):
             "Content-Type": "application/json"
         }
 
-        # Convert history to Groq format
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages = [{"role": "system", "content": FULL_SYSTEM_PROMPT}]
         for h in history:
             role = "assistant" if h["role"] == "model" else "user"
             messages.append({"role": role, "content": h["parts"][0]["text"]})
@@ -80,6 +129,7 @@ def try_groq(key, idx, history, user_text):
         print(f"Groq Error (key {idx}): " + str(e))
     return None
 
+
 # ================= GEMINI =================
 def get_next_gemini_key():
     with index_lock:
@@ -99,7 +149,7 @@ def try_gemini(key, idx, history, user_text):
         contents.append({"role": "user", "parts": [{"text": user_text}]})
 
         payload = {
-            "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+            "system_instruction": {"parts": [{"text": FULL_SYSTEM_PROMPT}]},
             "contents": contents,
             "generationConfig": {"maxOutputTokens": 150, "temperature": 0.8}
         }
@@ -119,11 +169,11 @@ def try_gemini(key, idx, history, user_text):
         print(f"Gemini Error (key {idx}): " + str(e))
     return None
 
+
 # ================= MAIN AI FUNCTION =================
 def get_ai_response(sender_id, user_text):
     print(f"Groq keys: {len(GROQ_KEYS)}, Gemini keys: {len(GEMINI_KEYS)}")
 
-    # User history নাও
     with history_lock:
         if sender_id not in user_histories:
             user_histories[sender_id] = []
@@ -131,7 +181,7 @@ def get_ai_response(sender_id, user_text):
 
     reply = None
 
-    # আগে Groq try করো (৩ বার)
+    # আগে Groq try করো
     for attempt in range(min(3, len(GROQ_KEYS))):
         key, idx = get_next_groq_key()
         if not key:
@@ -142,7 +192,7 @@ def get_ai_response(sender_id, user_text):
             break
         time.sleep(0.5)
 
-    # Groq fail হলে Gemini try করো (৩ বার)
+    # Groq fail হলে Gemini try করো
     if not reply:
         for attempt in range(min(3, len(GEMINI_KEYS))):
             key, idx = get_next_gemini_key()
@@ -158,7 +208,6 @@ def get_ai_response(sender_id, user_text):
         print("All tries failed!")
         return "একটু পরে বলো!"
 
-    # History update করো
     with history_lock:
         if sender_id not in user_histories:
             user_histories[sender_id] = []
@@ -168,6 +217,7 @@ def get_ai_response(sender_id, user_text):
             user_histories[sender_id] = user_histories[sender_id][-(MAX_HISTORY * 2):]
 
     return reply
+
 
 # ================= FLASK ROUTES =================
 @app.route("/")
@@ -213,6 +263,7 @@ def send_message(recipient_id, message_text):
     }
     r = requests.post(url, params=params, json=data)
     print("Send message status: " + str(r.status_code))
+
 
 # ================= KEEP ALIVE =================
 def keep_alive():
