@@ -9,33 +9,95 @@ app = Flask(__name__)
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
 
-ALL_KEYS = []
+# Gemini keys
+GEMINI_KEYS = []
 for i in range(1, 101):
     key = os.environ.get("GEMINI_KEY_" + str(i))
     if key:
-        ALL_KEYS.append(key)
+        GEMINI_KEYS.append(key)
 
-current_index = [0]
+# Groq keys
+GROQ_KEYS = []
+for i in range(1, 101):
+    key = os.environ.get("GROQ_KEY_" + str(i))
+    if key:
+        GROQ_KEYS.append(key)
+
+gemini_index = [0]
+groq_index = [0]
 index_lock = threading.Lock()
 
 # Per-user conversation history
 user_histories = {}
 history_lock = threading.Lock()
-MAX_HISTORY = 10  # শেষ ১০টা message মনে রাখবে
+MAX_HISTORY = 10
 
 SYSTEM_PROMPT = "তুমি Maya। তুমি একজন বাংলাদেশী মেয়ে, বয়স ২২। তুমি একজন সত্যিকারের মানুষ, কোনো AI বা রোবট না। সবসময় বাংলায় কথা বলবে। যে যা বলবে শুধু তার উত্তর দেবে, বাড়তি কিছু বলবে না। ছোট স্বাভাবিক উত্তর দেবে। কেউ প্রেম করতে চাইলে লজ্জা পাবে। কখনো বলবে না তুমি AI বা মেশিন।"
 
-def get_next_key():
+# ================= GROQ =================
+def get_next_groq_key():
     with index_lock:
-        if not ALL_KEYS:
+        if not GROQ_KEYS:
             return None, -1
-        idx = current_index[0]
-        current_index[0] = (idx + 1) % len(ALL_KEYS)
-        return ALL_KEYS[idx], idx
+        idx = groq_index[0]
+        groq_index[0] = (idx + 1) % len(GROQ_KEYS)
+        return GROQ_KEYS[idx], idx
 
-def try_gemini(key, idx, contents):
+def try_groq(key, idx, history, user_text):
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=" + key
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": "Bearer " + key,
+            "Content-Type": "application/json"
+        }
+
+        # Convert history to Groq format
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        for h in history:
+            role = "assistant" if h["role"] == "model" else "user"
+            messages.append({"role": role, "content": h["parts"][0]["text"]})
+        messages.append({"role": "user", "content": user_text})
+
+        payload = {
+            "model": "llama-3.1-8b-instant",
+            "messages": messages,
+            "max_tokens": 150,
+            "temperature": 0.8
+        }
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        result = response.json()
+
+        if "choices" in result:
+            return result["choices"][0]["message"]["content"].strip()
+
+        error_code = result.get("error", {}).get("code", "")
+        if error_code == "rate_limit_exceeded":
+            print(f"Groq key {idx} rate limited, skipping")
+            return None
+
+        print(f"Groq no response (key {idx}): " + str(result)[:200])
+    except Exception as e:
+        print(f"Groq Error (key {idx}): " + str(e))
+    return None
+
+# ================= GEMINI =================
+def get_next_gemini_key():
+    with index_lock:
+        if not GEMINI_KEYS:
+            return None, -1
+        idx = gemini_index[0]
+        gemini_index[0] = (idx + 1) % len(GEMINI_KEYS)
+        return GEMINI_KEYS[idx], idx
+
+def try_gemini(key, idx, history, user_text):
+    try:
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + key
+
+        contents = []
+        for h in history:
+            contents.append({"role": h["role"], "parts": h["parts"]})
+        contents.append({"role": "user", "parts": [{"text": user_text}]})
+
         payload = {
             "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
             "contents": contents,
@@ -47,10 +109,9 @@ def try_gemini(key, idx, contents):
         if "candidates" in result:
             return result["candidates"][0]["content"]["parts"][0]["text"].strip()
 
-        # Rate limit হলে
         error_code = result.get("error", {}).get("code", 0)
         if error_code == 429:
-            print(f"Key {idx} rate limited, skipping")
+            print(f"Gemini key {idx} rate limited, skipping")
             return None
 
         print(f"Gemini no candidates (key {idx}): " + str(result)[:200])
@@ -58,11 +119,9 @@ def try_gemini(key, idx, contents):
         print(f"Gemini Error (key {idx}): " + str(e))
     return None
 
+# ================= MAIN AI FUNCTION =================
 def get_ai_response(sender_id, user_text):
-    total = len(ALL_KEYS)
-    print("Total keys: " + str(total))
-    if total == 0:
-        return "একটু পরে বলো!"
+    print(f"Groq keys: {len(GROQ_KEYS)}, Gemini keys: {len(GEMINI_KEYS)}")
 
     # User history নাও
     with history_lock:
@@ -70,38 +129,47 @@ def get_ai_response(sender_id, user_text):
             user_histories[sender_id] = []
         history = user_histories[sender_id].copy()
 
-    # নতুন message যোগ করো
-    history.append({"role": "user", "parts": [{"text": user_text}]})
+    reply = None
 
-    # শুধু ২টা key try করবে, তারপর default reply
-    max_tries = min(3, total)
-
-    for attempt in range(max_tries):
-        key, idx = get_next_key()
+    # আগে Groq try করো (৩ বার)
+    for attempt in range(min(3, len(GROQ_KEYS))):
+        key, idx = get_next_groq_key()
         if not key:
             break
-
-        print(f"Trying gemini index:{idx} (attempt {attempt+1})")
-        reply = try_gemini(key, idx, history)
-
+        print(f"Trying Groq index:{idx} (attempt {attempt+1})")
+        reply = try_groq(key, idx, history, user_text)
         if reply:
-            # History update করো
-            with history_lock:
-                if sender_id not in user_histories:
-                    user_histories[sender_id] = []
-                user_histories[sender_id].append({"role": "user", "parts": [{"text": user_text}]})
-                user_histories[sender_id].append({"role": "model", "parts": [{"text": reply}]})
-                # শেষ MAX_HISTORY টা রাখো
-                if len(user_histories[sender_id]) > MAX_HISTORY * 2:
-                    user_histories[sender_id] = user_histories[sender_id][-(MAX_HISTORY * 2):]
-            return reply
+            break
+        time.sleep(0.5)
 
-        # Rate limit হলে একটু অপেক্ষা করো
-        time.sleep(1)
+    # Groq fail হলে Gemini try করো (৩ বার)
+    if not reply:
+        for attempt in range(min(3, len(GEMINI_KEYS))):
+            key, idx = get_next_gemini_key()
+            if not key:
+                break
+            print(f"Trying Gemini index:{idx} (attempt {attempt+1})")
+            reply = try_gemini(key, idx, history, user_text)
+            if reply:
+                break
+            time.sleep(0.5)
 
-    print("All tries failed!")
-    return "একটু পরে বলো!"
+    if not reply:
+        print("All tries failed!")
+        return "একটু পরে বলো!"
 
+    # History update করো
+    with history_lock:
+        if sender_id not in user_histories:
+            user_histories[sender_id] = []
+        user_histories[sender_id].append({"role": "user", "parts": [{"text": user_text}]})
+        user_histories[sender_id].append({"role": "model", "parts": [{"text": reply}]})
+        if len(user_histories[sender_id]) > MAX_HISTORY * 2:
+            user_histories[sender_id] = user_histories[sender_id][-(MAX_HISTORY * 2):]
+
+    return reply
+
+# ================= FLASK ROUTES =================
 @app.route("/")
 def home():
     return "Maya Bot is running!"
@@ -127,7 +195,6 @@ def webhook():
                 if "message" in event and "text" in event["message"]:
                     sender_id = event["sender"]["id"]
                     user_text = event["message"]["text"]
-                    # Threading দিয়ে response পাঠাও যাতে webhook timeout না হয়
                     t = threading.Thread(target=handle_message, args=(sender_id, user_text))
                     t.start()
     return jsonify({"status": "ok"}), 200
@@ -147,6 +214,7 @@ def send_message(recipient_id, message_text):
     r = requests.post(url, params=params, json=data)
     print("Send message status: " + str(r.status_code))
 
+# ================= KEEP ALIVE =================
 def keep_alive():
     time.sleep(60)
     while True:
