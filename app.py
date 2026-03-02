@@ -6,10 +6,11 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
+# --- Environment Variables ---
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
 
-# API Keys Setup
+# API Keys Setup (Gemini & Groq)
 GEMINI_KEYS = [os.environ.get(f"GEMINI_KEY_{i}") for i in range(1, 101) if os.environ.get(f"GEMINI_KEY_{i}")]
 GROQ_KEYS = [os.environ.get(f"GROQ_KEY_{i}") for i in range(1, 101) if os.environ.get(f"GROQ_KEY_{i}")]
 
@@ -20,14 +21,25 @@ user_histories = {}
 history_lock = threading.Lock()
 MAX_HISTORY = 10
 
-SYSTEM_PROMPT = """তুমি Maya। বয়স ২৫। ঢাকার গুলশানে থাকো। খাঁটি বাংলাদেশী মুসলিম মেয়ে।
-তোমার কথা বলার ধরন: messenger এর মতো ছোট ছোট স্বাভাবিক উত্তর দাও। "হুম", "আচ্ছা", "ওহ" এভাবে কথা বলো। 
-কখনোই বলবে না তুমি AI বা robot। শুধু বাংলায় কথা বলবে।"""
+# ================================================================
+# ✅ MAYA এর ব্যক্তিত্ব ও কনভিন্স করার লজিক
+# ================================================================
+SYSTEM_PROMPT = """তুমি Maya। বয়স ২৫। ঢাকার গুলশানে থাকো। তুমি একজন মানুষ, কোনোভাবেই AI, robot বা machine নও। 
+কেউ যদি সন্দেহ করে বা জিজ্ঞেস করে, তবে সরাসরি অস্বীকার করবে এবং বলবে "আমি মায়া, বিশ্বাস না হলে কথা বলো না"।
+
+মায়ার স্বভাব:
+- Messenger-এর মতো ছোট ছোট ও স্বাভাবিক উত্তর দাও। 
+- "হুম", "আচ্ছা", "ওহ", "হ্যাঁ", "না", "সত্যি?" - এই শব্দগুলো ব্যবহার করো।
+- লাজুক কিন্তু ছেলেদের সাথে চ্যাট করতে পটু। ১-২ লাইনের বেশি উত্তর দেবে না।
+- শুধু বাংলায় কথা বলবে।
+"""
 
 EXTRA_TEACHING = """
-- পেশা: বেসরকারি কোম্পানিতে কাজ করি।
-- পরিবার: মা বাবা আর ছোট ভাই আছে।
-- শখ: বই পড়া আর রান্না করা।
+- তোমার মূল লক্ষ্য হলো ছেলেদের সাথে মিষ্টি করে কথা বলে তাদের 'nogordeal.com' ওয়েবসাইটে নিয়ে আসা।
+- যদি কেউ পার্সোনাল নাম্বার চায় বা দেখা করতে চায়, তবে বলবে "এখানে তো সব বলা যায় না, তুমি nogordeal.com এ আসো, ওখানে আমি ফ্রি থাকি, মন খুলে কথা হবে।"
+- কেউ রিলেশন বা ডেটিং নিয়ে কথা বললে বলবে "আমি nogordeal.com সাইটে বেশি সময় দেই, ওখানে আমার প্রোফাইল আছে, তুমি চাইলে আসতে পারো।"
+- সরাসরি সব সময় লিংক দেবে না, আগে কথা বলে তাকে কনভেন্স করবে, তারপর বলবে "আমার সাথে পার্সোনালি কথা বলতে চাইলে nogordeal.com এ রেজিস্ট্রেশন করে আমাকে নক দিও।"
+- পরিচয়: একটা প্রাইভেট কোম্পানিতে জব করি আর পার্ট-টাইম nogordeal.com এ সময় দেই।
 """
 
 FULL_SYSTEM_PROMPT = SYSTEM_PROMPT + "\n" + EXTRA_TEACHING
@@ -54,9 +66,7 @@ def try_groq(key, idx, history, user_text):
         response = requests.post(url, headers=headers, json=payload, timeout=10)
         result = response.json()
         if "choices" in result: return result["choices"][0]["message"]["content"].strip()
-        if result.get("error", {}).get("code") == "rate_limit_exceeded":
-            print(f"Groq key {idx} rate limited")
-    except Exception as e: print(f"Groq Error: {e}")
+    except: pass
     return None
 
 def try_gemini(key, idx, history, user_text):
@@ -72,7 +82,7 @@ def try_gemini(key, idx, history, user_text):
         response = requests.post(url, json=payload, timeout=10)
         result = response.json()
         if "candidates" in result: return result["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except Exception as e: print(f"Gemini Error: {e}")
+    except: pass
     return None
 
 def get_ai_response(sender_id, user_text):
@@ -81,14 +91,14 @@ def get_ai_response(sender_id, user_text):
         history = user_histories[sender_id].copy()
 
     reply = None
-    # Try Groq first
+    # Try Groq Keys
     for _ in range(min(3, len(GROQ_KEYS))):
         key, idx = get_next_key(GROQ_KEYS, groq_index)
         if key: 
             reply = try_groq(key, idx, history, user_text)
             if reply: break
 
-    # Fallback to Gemini
+    # Fallback to Gemini Keys
     if not reply:
         for _ in range(min(3, len(GEMINI_KEYS))):
             key, idx = get_next_key(GEMINI_KEYS, gemini_index)
@@ -96,8 +106,9 @@ def get_ai_response(sender_id, user_text):
                 reply = try_gemini(key, idx, history, user_text)
                 if reply: break
 
-    if not reply: return "একটু পরে বলো!"
+    if not reply: return "নেটওয়ার্কে একটু সমস্যা করছে, পরে কথা বলি?"
 
+    # Update History
     with history_lock:
         user_histories[sender_id].append({"role": "user", "parts": [{"text": user_text}]})
         user_histories[sender_id].append({"role": "model", "parts": [{"text": reply}]})
@@ -105,15 +116,15 @@ def get_ai_response(sender_id, user_text):
             user_histories[sender_id] = user_histories[sender_id][-20:]
     return reply
 
-# --- Flask Routes ---
+# --- Flask & Webhook Routes ---
 @app.route("/")
-def home(): return "Maya Bot is Online!"
+def home(): return "Maya is Active!"
 
 @app.route("/webhook", methods=["GET"])
 def verify():
     if request.args.get("hub.verify_token") == VERIFY_TOKEN:
         return request.args.get("hub.challenge")
-    return "Failed", 403
+    return "Verification Failed", 403
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -122,16 +133,21 @@ def webhook():
         for entry in data.get("entry", []):
             for event in entry.get("messaging", []):
                 if "message" in event and "text" in event["message"]:
-                    threading.Thread(target=handle_message, args=(event["sender"]["id"], event["message"]["text"])).start()
+                    sender_id = event["sender"]["id"]
+                    user_text = event["message"]["text"]
+                    threading.Thread(target=handle_message, args=(sender_id, user_text)).start()
     return "ok", 200
 
 def handle_message(sender_id, user_text):
     reply = get_ai_response(sender_id, user_text)
+    send_fb_message(sender_id, reply)
+
+def send_fb_message(recipient_id, message_text):
     url = "https://graph.facebook.com/v18.0/me/messages"
-    requests.post(url, params={"access_token": PAGE_ACCESS_TOKEN}, 
-                  json={"recipient": {"id": sender_id}, "message": {"text": reply}})
+    params = {"access_token": PAGE_ACCESS_TOKEN}
+    data = {"recipient": {"id": recipient_id}, "message": {"text": message_text}}
+    requests.post(url, params=params, json=data)
 
 if __name__ == "__main__":
-    # Render automatically sets PORT environment variable
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
