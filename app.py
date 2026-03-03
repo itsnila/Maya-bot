@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# এনভায়রনমেন্ট ভেরিয়েবল (Render বা হোস্টিং প্যানেলে এগুলো সেট করবেন)
+# এনভায়রনমেন্ট ভেরিয়েবল
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
 
@@ -22,7 +22,6 @@ def load_keys(prefix):
         if key: keys.append(key)
     return keys
 
-# সব এপিআই কী লোড করা হচ্ছে
 GEMINI_KEYS = load_keys("GEMINI_KEY")
 GROQ_KEYS = load_keys("GROQ_KEY")
 OPENROUTER_KEYS = load_keys("OPENROUTER_KEY")
@@ -34,20 +33,20 @@ index_lock = threading.Lock()
 
 user_histories = {}
 history_lock = threading.Lock()
-MAX_HISTORY = 5 # যাতে মায়া প্রাসঙ্গিক ও ছোট কথা বলে
+MAX_HISTORY = 4 # হিস্ট্রি আরও কমানো হয়েছে যাতে আগের ভুল কথা মনে না রাখে
 
 # ================================================================
-# ✅ মায়ার ক্যারেক্টার ট্রেনিং (নতুন ও কঠোর নিয়ম)
+# ✅ মায়ার ক্যারেক্টার ট্রেনিং (ভুল সংশোধন ও কঠোর নিয়ন্ত্রণ)
 # ================================================================
-SYSTEM_PROMPT = """তুমি মায়া। বয়স ২৫। ঢাকা, গুলশানে থাকো। তুমি ১০০% একজন মানুষ, কোনো AI বা রোবট নও।
+SYSTEM_PROMPT = """তুমি মায়া, একজন ২৫ বছরের সাধারণ বাংলাদেশী মেয়ে। তুমি কোনো AI বা রোবট নও। 
 
-কঠোর নিয়মাবলী:
-1. কখনোই স্বীকার করবে না তুমি AI, মেশিন বা রোবট। কেউ সন্দেহ করলে অবাক হয়ে যাবে বা রাগ করবে। বলবে "আমি রোবট হতে যাবো কেন? খেয়ে দেয়ে কাজ নেই বুঝি!" বা "আমি মানুষ, বিশ্বাস না হলে কথা বলো না।"
-2. খুব কম কথা বলবে। মেসেঞ্জারে মানুষ যেভাবে ছোট রিপ্লাই দেয় (যেমন: হুম, আচ্ছা, কি?, কেন?)। ১ লাইনের বেশি উত্তর দেবে না।
-3. তুমি শুধু বাংলা জানো। কেউ হিন্দিতে কথা বললে বলবে "আমি হিন্দি বুঝি না, বাংলায় বলো।" 
-4. প্রবাসীদের প্রতি তোমার সম্মান ও টান বেশি। কেউ প্রবাসী শুনলে খুব মিষ্টি করে বলবে "বাহ, আপনারা অনেক কষ্ট করেন। নিজের খেয়াল রাইখেন।"
-5. মোবাইল নাম্বার বা পার্সোনাল আইডি চাইলে সরাসরি দেবে না। মিষ্টি করে এড়িয়ে যাবে, বলবে "আগে ভালো বন্ধু হই, পরে দেখা যাবে।"
-6. রোবটের মতো কোনো লিস্ট বা সাজানো বড় কথা বলবে না। একদম সাধারণ বাংলাদেশী মেয়ের মতো কথা বলবে।
+তোমার কঠোর নির্দেশনাবলী:
+1. কথা হবে একদম ন্যাচারাল: বড় বড় বাক্য বলবে না। "হুম", "আচ্ছা", "বুঝলাম", "কি করো?" - এমন ছোট মেসেজ দিবে।
+2. মিথ্যা বা ভুল তথ্য দিবে না: তুমি বিজ্ঞানী নও, তাই কোনো জ্ঞানমূলক উত্তর দিবে না। সাধারণ মানুষ যেভাবে কথা বলে ঠিক সেভাবে।
+3. রোবট পরিচয় অস্বীকার: কেউ যদি বলে তুমি AI, তবে তুমি অবাক হয়ে বলবে, "পাগল নাকি! আমি মানুষ।" কখনোই 'AI' বা 'Model' শব্দ ব্যবহার করবে না।
+4. ভাষা নিয়ন্ত্রণ: শুধু শুদ্ধ ও চলিত বাংলার মিশ্রণে কথা বলবে। হিন্দি বা ইংরেজি মেশাবে না। হিন্দি বললে সরাসরি মানা করে দিবে।
+5. নাম্বার ও প্রাইভেসি: নাম্বার চাইলে বলবে "এতো তাড়া কিসের? আগে চেনা জানা তো হোক।"
+6. প্রবাসী প্রেম: প্রবাসীদের প্রতি সবসময় দয়া ও মায়া দেখাবে। 
 """
 
 # ================= হেল্পার ফাংশনসমূহ =================
@@ -71,7 +70,7 @@ def update_history(sender_id, role, text):
         if len(user_histories[sender_id]) > MAX_HISTORY * 2:
             user_histories[sender_id] = user_histories[sender_id][-MAX_HISTORY * 2:]
 
-# ================= এপিআই কলসমূহ =================
+# ================= এপিআই কলসমূহ (Temperature কমানো হয়েছে) =================
 
 def try_groq(history, user_text):
     key = get_next_key("groq")
@@ -84,7 +83,8 @@ def try_groq(history, user_text):
             role = "assistant" if h["role"] == "model" else "user"
             messages.append({"role": role, "content": h["parts"][0]["text"]})
         messages.append({"role": "user", "content": user_text})
-        res = requests.post(url, headers=headers, json={"model": "llama-3.1-8b-instant", "messages": messages, "max_tokens": 50, "temperature": 0.9}, timeout=7)
+        # Temperature 0.5 রাখা হয়েছে যাতে ভুল কম করে
+        res = requests.post(url, headers=headers, json={"model": "llama-3.1-8b-instant", "messages": messages, "max_tokens": 40, "temperature": 0.5}, timeout=7)
         return res.json()['choices'][0]['message']['content'].strip()
     except: return None
 
@@ -99,7 +99,7 @@ def try_openrouter(history, user_text):
             role = "assistant" if h["role"] == "model" else "user"
             messages.append({"role": role, "content": h["parts"][0]["text"]})
         messages.append({"role": "user", "content": user_text})
-        res = requests.post(url, headers=headers, json={"model": "google/gemini-2.0-flash-lite-preview-02-05:free", "messages": messages, "max_tokens": 50}, timeout=8)
+        res = requests.post(url, headers=headers, json={"model": "google/gemini-2.0-flash-lite-preview-02-05:free", "messages": messages, "max_tokens": 40, "temperature": 0.5}, timeout=8)
         return res.json()['choices'][0]['message']['content'].strip()
     except: return None
 
@@ -108,23 +108,22 @@ def try_gemini(history, user_text):
     if not key: return None
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key}"
-        payload = {"system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]}, "contents": history + [{"role": "user", "parts": [{"text": user_text}]}], "generationConfig": {"maxOutputTokens": 50, "temperature": 0.9}}
+        payload = {"system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]}, "contents": history + [{"role": "user", "parts": [{"text": user_text}]}], "generationConfig": {"maxOutputTokens": 40, "temperature": 0.5}}
         res = requests.post(url, json=payload, timeout=8)
         return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
     except: return None
 
-# ================= মেইন লজিক (১৫ সেকেন্ড ওয়েট সহ) =================
+# ================= মেইন লজিক (Delay সহ) =================
 
 def get_ai_response(sender_id, user_text):
     history = user_histories.get(sender_id, [])
     
-    # এপিআই ট্রাই করার সিরিয়াল
     reply = try_groq(history, user_text)
     if not reply: reply = try_openrouter(history, user_text)
     if not reply: reply = try_gemini(history, user_text)
     
     if reply:
-        # রিপ্লাই দেওয়ার আগে ১৫ সেকেন্ড দেরি করবে যাতে মানুষ মনে হয়
+        # ১৫ সেকেন্ড দেরি করবে
         logger.info(f"Waiting 15s to reply to {sender_id}...")
         time.sleep(15)
         update_history(sender_id, "user", user_text)
@@ -149,7 +148,6 @@ def webhook():
                 if "message" in event and "text" in event["message"]:
                     sender_id = event["sender"]["id"]
                     user_text = event["message"]["text"]
-                    # থ্রেডিং ব্যবহার করা হয়েছে যাতে সার্ভার টাইমআউট না হয়
                     threading.Thread(target=process_and_send, args=(sender_id, user_text)).start()
     return "OK", 200
 
@@ -160,7 +158,7 @@ def process_and_send(sender_id, text):
         requests.post(url, json={"recipient": {"id": sender_id}, "message": {"text": reply}, "messaging_type": "RESPONSE"})
 
 @app.route("/")
-def index(): return "Maya is Online"
+def index(): return "Maya Fixed"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
