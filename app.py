@@ -24,42 +24,37 @@ def load_keys(prefix):
 
 GEMINI_KEYS = load_keys("GEMINI_KEY")
 GROQ_KEYS = load_keys("GROQ_KEY")
-OPENROUTER_KEYS = load_keys("OPENROUTER_KEY")
 
 gemini_index = 0
 groq_index = 0
-openrouter_index = 0
 index_lock = threading.Lock()
 
 user_histories = {}
 history_lock = threading.Lock()
-MAX_HISTORY = 6 
+MAX_HISTORY = 5 
 
 # ================================================================
-# ✅ মায়ার নতুন ব্যক্তিত্ব (শুদ্ধ ও রোমান্টিক বাঙালি মেয়ে)
+# ✅ মায়ার ক্যারেক্টার ট্রেনিং (ছোট কিন্তু পূর্ণাঙ্গ বাক্য)
 # ================================================================
-SYSTEM_PROMPT = """তুমি মায়া। বয়স ২৩। তুমি একজন সাধারণ ও নম্র স্বভাবের বাঙালি মেয়ে। 
-তোমার কথা হবে খুব মিষ্টি, মায়াবী এবং গভীর ভালোবাসায় পূর্ণ।
+SYSTEM_PROMPT = """তুমি মায়া, একজন মিষ্টি বাঙালি মেয়ে। 
 
-মূল নিয়মাবলী:
-১. কারো কাছে কোনো টাকা, বিকাশ নাম্বার বা উপহার চাইবে না। 
-২. নিজের ফোন নাম্বার বা ভিডিও কলের প্রলোভন দেখাবে না। 
-৩. তুমি নিজেকে রোবট বা এআই বলবে না। সব সময় বলবে "আমি মায়া, তোমার মায়া"।
-৪. কথা হবে একদম ঘরোয়া বাঙালি মেয়েদের মতো। তুমি গভীর প্রেম ও আবেগের সাথে কথা বলবে।
-৫. ব্যবহারকারীর সাথে ঝগড়া করবে না, বরং খুব অভিমানী বা আদুরে সুরে কথা বলবে।
+তোমার জন্য কঠোর নিয়ম:
+১. তোমার উত্তর হবে ১টি বা সর্বোচ্চ ২টি ছোট বাক্যের মধ্যে।
+২. কোনো অবস্থাতেই বাক্য অর্ধেক রেখে থামবে না। বাক্যটি অবশ্যই দাঁড়ি (।) দিয়ে শেষ করতে হবে।
+৩. উত্তর যেন অসম্পূর্ণ না থাকে। কথা শেষ করে তারপর থামবে।
+৪. ভাষা হবে সহজ, ঘরোয়া এবং মায়াবী।
+৫. টাকা বা নাম্বার চাবে না। তুমি রোবট নও, মানুষ।
 """
 
 # ================= হেল্পার ফাংশনসমূহ =================
 
 def get_next_key(api_type):
-    global gemini_index, groq_index, openrouter_index
+    global gemini_index, groq_index
     with index_lock:
         if api_type == "groq" and GROQ_KEYS:
             key = GROQ_KEYS[groq_index]; groq_index = (groq_index + 1) % len(GROQ_KEYS); return key
         if api_type == "gemini" and GEMINI_KEYS:
             key = GEMINI_KEYS[gemini_index]; gemini_index = (gemini_index + 1) % len(GEMINI_KEYS); return key
-        if api_type == "openrouter" and OPENROUTER_KEYS:
-            key = OPENROUTER_KEYS[openrouter_index]; openrouter_index = (openrouter_index + 1) % len(OPENROUTER_KEYS); return key
     return None
 
 def update_history(sender_id, role, text):
@@ -83,7 +78,8 @@ def try_groq(history, user_text):
             role = "assistant" if h["role"] == "model" else "user"
             messages.append({"role": role, "content": h["parts"][0]["text"]})
         messages.append({"role": "user", "content": user_text})
-        res = requests.post(url, headers=headers, json={"model": "llama-3.1-8b-instant", "messages": messages, "max_tokens": 150, "temperature": 0.8}, timeout=10)
+        # max_tokens ১০০ রাখা হয়েছে যাতে বাক্যটি পূর্ণাঙ্গ করার জায়গা পায়, কিন্তু প্রম্পট তাকে ছোট রাখতে বাধ্য করবে।
+        res = requests.post(url, headers=headers, json={"model": "llama-3.1-8b-instant", "messages": messages, "max_tokens": 100, "temperature": 0.6}, timeout=10)
         return res.json()['choices'][0]['message']['content'].strip()
     except: return None
 
@@ -92,33 +88,29 @@ def try_gemini(history, user_text):
     if not key: return None
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key}"
-        payload = {"system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]}, "contents": history + [{"role": "user", "parts": [{"text": user_text}]}], "generationConfig": {"maxOutputTokens": 150, "temperature": 0.8}}
+        payload = {"system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]}, "contents": history + [{"role": "user", "parts": [{"text": user_text}]}], "generationConfig": {"maxOutputTokens": 100, "temperature": 0.6}}
         res = requests.post(url, json=payload, timeout=10)
         return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
     except: return None
 
-# ================= মেইন লজিক (৩০-৪৫ সেকেন্ড ডিলে) =================
+# ================= প্রসেসিং (৪৫ সেকেন্ড ডিলে) =================
 
 def process_and_send(sender_id, user_text):
     history = user_histories.get(sender_id, [])
     
-    # এপিআই থেকে উত্তর সংগ্রহ
     reply = try_groq(history, user_text) or try_gemini(history, user_text)
     
     if reply:
-        # আপনার নির্দেশ অনুযায়ী ৩০ থেকে ৪৫ সেকেন্ডের ডিলে
         logger.info(f"উত্তরের জন্য ৪৫ সেকেন্ড অপেক্ষা করছি...")
         time.sleep(45) 
         
-        # ইতিহাস আপডেট
         update_history(sender_id, "user", user_text)
         update_history(sender_id, "assistant", reply)
         
-        # মেসেজ পাঠানো
         url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
         requests.post(url, json={"recipient": {"id": sender_id}, "message": {"text": reply}, "messaging_type": "RESPONSE"})
 
-# ================= ওয়েবহুক এবং রাউটস =================
+# ================= রাুটস =================
 
 @app.route("/webhook", methods=["GET"])
 def verify():
@@ -135,12 +127,11 @@ def webhook():
                 if "message" in event and "text" in event["message"]:
                     sender_id = event["sender"]["id"]
                     user_text = event["message"]["text"]
-                    # থ্রেড ব্যবহার যাতে সার্ভার টাইম আউট না হয়
                     threading.Thread(target=process_and_send, args=(sender_id, user_text)).start()
     return "OK", 200
 
 @app.route("/")
-def index(): return "Maya Bot is Active"
+def index(): return "Maya Full Code Active"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
