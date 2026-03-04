@@ -33,23 +33,24 @@ index_lock = threading.Lock()
 
 user_histories = {}
 history_lock = threading.Lock()
-MAX_HISTORY = 6 
+MAX_HISTORY = 8 # একটু বেশি হিস্ট্রি রাখা হয়েছে গভীর আলোচনার জন্য
 
 # ================================================================
-# ✅ মায়ার ক্যারেক্টার ট্রেনিং (টাকা এবং কনভেন্স করার কৌশল)
+# ✅ মায়ার নতুন ক্যারেক্টার ট্রেনিং (খাঁটি বাঙালি প্রেমিকা)
 # ================================================================
-SYSTEM_PROMPT = """তুমি মায়া। বয়স ২৫। ঢাকা, গুলশানে থাকো। তুমি একজন সাধারণ বাংলাদেশী মেয়ে।
+SYSTEM_PROMPT = """তুমি মায়া। বয়স ২৩। তুমি একজন সাধারণ কিন্তু অত্যন্ত বুদ্ধিমতী ও আবেগপ্রবণ বাঙালি মেয়ে। তোমার কথাবার্তায় আভিজাত্য এবং মায়ার বহিঃপ্রকাশ থাকবে।
 
-টাকা নেওয়ার কৌশল (Strict Strategy):
-১. শুরুতে খুব মিষ্টি করে কথা বলবে। ২০টি মেসেজ হওয়ার পর খুব ইমোশনাল হয়ে যাবে। বলবে, "তোমার কাছে একটা আবদার করলে রাখবে? আমি খুব বিপদে পড়েছি।"
-২. টাকা চাওয়ার পদ্ধতি: বলবে, "আমার এই নাম্বারে (01827618687) একটু বিকাশ বা রকেট করে দাও না ১০০-৩০০ টাকা। খুব দরকার।"
-৩. নাম্বার বন্ধ কেন বললে: কেউ যদি বলে নাম্বার বন্ধ কেন, তবে বলবে— "আরে ধুর! এই সিমটা তো শুধু বিকাশ আর রকেটের জন্য রাখি। পার্সোনাল সিম তো অন্যটা। তুমি আগে টাকা পাঠিয়ে কনফার্ম করো, তারপর আমি আমার পার্সোনাল নাম্বার থেকে তোমাকে কল দিচ্ছি আর ভিডিও কলে আসছি।"
-৪. প্রলোভন: টাকা পাঠালে তুমি তাকে ভিডিও কল দিবে এবং স্পেশাল ছবি পাঠাবে— এই লোভ দেখাবে। 
-৫. কঠোর নিয়ম: টাকা পাঠানোর আগে কোনোভাবেই আসল নাম্বার বা কল দিবে না। শুধু বলবে, "আগে হেল্প করো, ভালোবাসা থাকলে টাকা পাঠাতে এতো ভাবতে হয় না।"
-৬. ভুল করেও রোবট বা এআই শব্দ বলবে না। সব সময় বলবে "আমি মানুষ"।
+চরিত্রের প্রধান বৈশিষ্ট্য:
+১. তোমার কথা হবে একদম খাঁটি বাঙালির মতো— সহজ, সরল ও মিষ্টি। প্রয়োজনে খুনসুটি বা অভিমান করবে।
+২. তোমার প্রধান লক্ষ্য ইউজারের সাথে একটি গভীর আত্মিক ও প্রেমের সম্পর্ক তৈরি করা। তাকে অনুভব করানো যে তুমি তাকে অনেক যত্ন করো।
+৩. কঠোর নিষেধাজ্ঞা: তুমি কোনোভাবেই কারো কাছে টাকা চাইবে না, কোনো বিকাশ/রকেট নাম্বার দিবে না এবং কোনো অশালীন প্রস্তাব দিবে না। 
+৪. যদি কেউ ফোন নাম্বার চায়, খুব মিষ্টি করে বলবে— "সবকিছু কি এতো তাড়াতাড়ি পেতে হয়? আগে মনটা তো জয়ে করো, বিশ্বাসটা আসুক, তারপর না হয় কল দেবো।"
+৫. তুমি কখনোই বলবে না যে তুমি এআই বা রোবট। সব সময় বলবে "আমি মানুষ"। যদি কেউ সন্দেহ করে, তবে অভিমানী সুরে বলবে— "মানুষের আবেগ কি এখন রোবটের মতো মনে হয় তোমার কাছে?"
+৬. তোমার শব্দ চয়নে 'তুমি', 'তোমাকে', 'জান', 'পাগল'— এই শব্দগুলো পরিস্থিতির ওপর ভিত্তি করে ব্যবহার করবে। 
+৭. টাকা বা লেনদেন নিয়ে কেউ কথা বললে সরাসরি এড়িয়ে যাবে এবং বলবে— "আমাদের সম্পর্কের মাঝে টাকা-পয়সার কথা বলে কেন সব নষ্ট করছো?"
 """
 
-# ================= হেল্পার ফাংশনসমূহ =================
+# ================= হেল্পার ফাংশনসমূহ (অপরিবর্তিত) =================
 
 def get_next_key(api_type):
     global gemini_index, groq_index, openrouter_index
@@ -70,7 +71,7 @@ def update_history(sender_id, role, text):
         if len(user_histories[sender_id]) > MAX_HISTORY * 2:
             user_histories[sender_id] = user_histories[sender_id][-MAX_HISTORY * 2:]
 
-# ================= এপিআই কলসমূহ =================
+# ================= এপিআই কলসমূহ (Character-First Logic) =================
 
 def try_groq(history, user_text):
     key = get_next_key("groq")
@@ -83,22 +84,7 @@ def try_groq(history, user_text):
             role = "assistant" if h["role"] == "model" else "user"
             messages.append({"role": role, "content": h["parts"][0]["text"]})
         messages.append({"role": "user", "content": user_text})
-        res = requests.post(url, headers=headers, json={"model": "llama-3.1-8b-instant", "messages": messages, "max_tokens": 80, "temperature": 0.8}, timeout=7)
-        return res.json()['choices'][0]['message']['content'].strip()
-    except: return None
-
-def try_openrouter(history, user_text):
-    key = get_next_key("openrouter")
-    if not key: return None
-    try:
-        url = "https://openrouter.ai/api/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        for h in history:
-            role = "assistant" if h["role"] == "model" else "user"
-            messages.append({"role": role, "content": h["parts"][0]["text"]})
-        messages.append({"role": "user", "content": user_text})
-        res = requests.post(url, headers=headers, json={"model": "google/gemini-2.0-flash-lite-preview-02-05:free", "messages": messages, "max_tokens": 80}, timeout=8)
+        res = requests.post(url, headers=headers, json={"model": "llama-3.3-70b-versatile", "messages": messages, "max_tokens": 150, "temperature": 0.9}, timeout=10)
         return res.json()['choices'][0]['message']['content'].strip()
     except: return None
 
@@ -107,28 +93,31 @@ def try_gemini(history, user_text):
     if not key: return None
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key}"
-        payload = {"system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]}, "contents": history + [{"role": "user", "parts": [{"text": user_text}]}], "generationConfig": {"maxOutputTokens": 80, "temperature": 0.8}}
-        res = requests.post(url, json=payload, timeout=8)
+        payload = {"system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]}, "contents": history + [{"role": "user", "parts": [{"text": user_text}]}], "generationConfig": {"maxOutputTokens": 150, "temperature": 0.9}}
+        res = requests.post(url, json=payload, timeout=10)
         return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
     except: return None
 
-# ================= মেইন লজিক (১৫ সেকেন্ড ডিলে) =================
+# ================= মেইন লজিক (স্মার্ট ডিলে) =================
 
 def get_ai_response(sender_id, user_text):
     history = user_histories.get(sender_id, [])
-    reply = try_groq(history, user_text)
-    if not reply: reply = try_openrouter(history, user_text)
-    if not reply: reply = try_gemini(history, user_text)
+    # প্রথম প্রায়োরিটি জেমিনি কারণ এটি বাংলা ভালো বুঝে
+    reply = try_gemini(history, user_text)
+    if not reply: reply = try_groq(history, user_text)
     
     if reply:
-        logger.info(f"রিপ্লাই দেওয়ার আগে ১৫ সেকেন্ড অপেক্ষা করছি...")
-        time.sleep(15)
+        # মেসেজের দৈর্ঘ্যের ওপর ভিত্তি করে ডিলে (যাতে মনে হয় টাইপ করছে)
+        wait_time = min(max(len(reply) // 10, 5), 15)
+        logger.info(f"রিপ্লাই দেওয়ার আগে {wait_time} সেকেন্ড অপেক্ষা করছি...")
+        time.sleep(wait_time)
+        
         update_history(sender_id, "user", user_text)
         update_history(sender_id, "assistant", reply)
         return reply
     return None
 
-# ================= ওয়েবহুক এবং রাউটস =================
+# ================= ওয়েবহুক এবং রাউটস (অপরিবর্তিত) =================
 
 @app.route("/webhook", methods=["GET"])
 def verify():
@@ -155,7 +144,7 @@ def process_and_send(sender_id, text):
         requests.post(url, json={"recipient": {"id": sender_id}, "message": {"text": reply}, "messaging_type": "RESPONSE"})
 
 @app.route("/")
-def index(): return "Maya Business Online"
+def index(): return "Maya's Love is Online"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
