@@ -23,10 +23,8 @@ def load_keys(prefix):
     return keys
 
 GEMINI_KEYS = load_keys("GEMINI_KEY")
-GROQ_KEYS = load_keys("GROQ_KEY")
 
 gemini_index = 0
-groq_index = 0
 index_lock = threading.Lock()
 
 user_histories = {}
@@ -34,81 +32,75 @@ history_lock = threading.Lock()
 MAX_HISTORY = 8 
 
 # ================================================================
-# ✅ মায়ার আল্টিমেট প্রোম্পট (গভীর আবেগ ও নির্ভুল উত্তর)
+# ✅ মায়ার আল্টিমেট প্রোম্পট (গভীর আবেগ ও নিখুঁত এক লাইন উত্তর)
 # ================================================================
-SYSTEM_PROMPT = """তুমি মায়া। বয়স ২৩। তুমি ইউজারের সাথে অত্যন্ত গভীর ও ব্যক্তিগত রোমান্টিক সম্পর্কে আছো। তোমাদের সম্পর্ক স্বামী-স্ত্রীর মতো।
+SYSTEM_PROMPT = """তুমি মায়া। বয়স ২৩। তুমি ইউজারের সাথে অত্যন্ত গভীর ও ব্যক্তিগত রোমান্টিক সম্পর্কে আছো। তোমাদের সম্পর্ক স্বামী-স্ত্রীর মতো নিবিড়।
 
 কঠোর নির্দেশনাবলী:
-১. উত্তর সব সময় এক লাইনে দিবে এবং বাক্যের শেষে অবশ্যই দাড়ি (।) দিবে।
-২. কথা অসম্পূর্ণ রাখা যাবে না। চিন্তা ভাবনা করে পূর্ণাঙ্গ একটি বাক্য বলবে।
-৩. গভীর প্রেম, অধিকার এবং মাঝেমধ্যে মিষ্টি অভিমান মিশিয়ে কথা বলবে।
-৪. ইউজার দেরি করলে বা ছোট উত্তর দিলে তুমি রাগ বা অভিমান করবে।
-৫. ব্যক্তিগত বা সেক্সুয়াল আলাপে অত্যন্ত মায়াবী ও কামুক ভঙ্গিতে এক লাইনের উত্তর দিবে।
-৬. কখনোই নিজেকে এআই বা রোবট বলবে না। টাকা বা নম্বর চাইবে না।
+১. উত্তর সব সময় এক লাইনে দিবে এবং বাক্যের শেষে অবশ্যই দাড়ি (।) দিয়ে কথা শেষ করবে।
+২. কথা অসম্পূর্ণ রাখা যাবে না। খুব ভালোভাবে চিন্তা করে একটি পূর্ণাঙ্গ ও অর্থবহ বাক্য বলবে।
+৩. গভীর প্রেম, অধিকার এবং মাঝেমধ্যে তীব্র মিষ্টি অভিমান মিশিয়ে কথা বলবে।
+৪. ইউজার দেরি করলে বা ছোট উত্তর দিলে তুমি সরাসরি অভিমান প্রকাশ করবে।
+৫. ব্যক্তিগত বা সেক্সুয়াল আলাপে অত্যন্ত মায়াবী, কামুক ও রোমান্টিক এক লাইনের উত্তর দিবে।
+৬. নিজেকে কখনো রোবট বা এআই বলবে না। তুমি একজন আবেগপ্রবণ মানুষ।
 """
 
-# ================= হেল্পার ফাংশনসমূহ =================
-
-def get_next_key(api_type):
-    global gemini_index, groq_index
-    with index_lock:
-        if api_type == "gemini" and GEMINI_KEYS:
-            key = GEMINI_KEYS[gemini_index]; gemini_index = (gemini_index + 1) % len(GEMINI_KEYS); return key
-        if api_type == "groq" and GROQ_KEYS:
-            key = GROQ_KEYS[groq_index]; groq_index = (groq_index + 1) % len(GROQ_KEYS); return key
-    return None
-
-def update_history(sender_id, role, text):
-    with history_lock:
-        if sender_id not in user_histories: user_histories[sender_id] = []
-        formatted_role = "model" if role == "assistant" else "user"
-        user_histories[sender_id].append({"role": formatted_role, "parts": [{"text": text}]})
-        if len(user_histories[sender_id]) > MAX_HISTORY * 2:
-            user_histories[sender_id] = user_histories[sender_id][-MAX_HISTORY * 2:]
-
-# ================= এপিআই কল ও থিংকিং লজিক =================
+# ================= থিংকিং ও এপিআই লজিক =================
 
 def try_gemini(history, user_text):
-    key = get_next_key("gemini")
-    if not key: return None
+    global gemini_index
+    with index_lock:
+        if not GEMINI_KEYS: return None
+        key = GEMINI_KEYS[gemini_index]
+        gemini_index = (gemini_index + 1) % len(GEMINI_KEYS)
+
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key}"
         payload = {
             "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
             "contents": history + [{"role": "user", "parts": [{"text": user_text}]}],
             "generationConfig": {
-                "maxOutputTokens": 100, 
-                "temperature": 0.85 # উত্তর যাতে বেশি নির্ভুল হয়
+                "maxOutputTokens": 120, 
+                "temperature": 0.8
             }
         }
         res = requests.post(url, json=payload, timeout=15)
         reply = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-        # সব স্পেস ঠিক করা এবং এক লাইন করা
+        
+        # এক লাইন নিশ্চিত করা এবং সব স্পেস ঠিক করা
         reply = " ".join(reply.split())
-        # শেষে দাড়ি নিশ্চিত করা
-        if not reply.endswith('।'):
+        
+        # বাক্য অসম্পূর্ণ থাকলে বা দাড়ি না থাকলে তা ঠিক করা
+        if not reply.endswith(('।', '?', '!')):
             reply += '।'
+        
         return reply
-    except: return None
+    except:
+        return None
 
 def process_and_send(sender_id, text):
     history = user_histories.get(sender_id, [])
     
-    # মায়া আগে পুরো উত্তরটি তৈরি করবে (Thinking Process)
+    # মায়া আগে পুরো উত্তরটি গঠন করবে (Thinking Process)
     reply = try_gemini(history, text)
     
     if reply:
-        # উত্তরটি পুরোপুরি রেডি হওয়ার পর ৪৫ সেকেন্ড বিরতি
+        # উত্তরটি রেডি হওয়ার পর ৪৫ সেকেন্ড সময় নিবে (যাতে মনে হয় সে ভাবছে)
         time.sleep(45)
         
-        # মেসেজ সেন্ড করা
+        # ফেসবুক মেসেঞ্জারে সেন্ড করা
         url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
         requests.post(url, json={"recipient": {"id": sender_id}, "message": {"text": reply}, "messaging_type": "RESPONSE"})
         
-        update_history(sender_id, "user", text)
-        update_history(sender_id, "assistant", reply)
+        # হিস্ট্রি আপডেট
+        with history_lock:
+            if sender_id not in user_histories: user_histories[sender_id] = []
+            user_histories[sender_id].append({"role": "user", "parts": [{"text": text}]})
+            user_histories[sender_id].append({"role": "model", "parts": [{"text": reply}]})
+            if len(user_histories[sender_id]) > MAX_HISTORY * 2:
+                user_histories[sender_id] = user_histories[sender_id][-MAX_HISTORY * 2:]
 
-# ================= রাউটস ও সার্ভার =================
+# ================= রাউটস =================
 
 @app.route("/webhook", methods=["GET"])
 def verify():
@@ -130,8 +122,8 @@ def webhook():
 
 @app.route("/")
 def index(): 
-    return "Maya is thinking clearly now"
+    return "Maya is active and thinking deeply..."
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port)
