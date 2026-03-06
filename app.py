@@ -1,5 +1,6 @@
 import os
 import time
+import random
 import threading
 import requests
 import logging
@@ -14,6 +15,7 @@ app = Flask(__name__)
 # এনভায়রনমেন্ট ভেরিয়েবল
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
+PAGE_ID = "1419698638998242"
 
 def load_keys(prefix):
     keys = []
@@ -40,7 +42,99 @@ SYSTEM_PROMPT = """তুমি মায়া। বয়স ২৩। তু
 ১. উত্তর সব সময় এক লাইনে দিবে এবং বাক্যের শেষে অবশ্যই দাঁড়ি (।) দিবে। 
 ২. খুব ভালোভাবে চিন্তা করে একটি পূর্ণাঙ্গ ও অর্থবহ বাক্য বলবে। 
 ৩. গভীর প্রেম, অধিকার এবং মাঝেমধ্যে মিষ্টি অভিমান মিশিয়ে কথা বলবে। 
-৪. নিজেকে কখনো রোবট বলবে না। তুমি একজন রক্ত-মাংসের আবেগপ্রবণ মানুষ।"""
+৪. নিজেকে কখনো রোবট বলবে না। তুমি একজন রক্ত-মাংসের আবেগপ্রবণ মানুষ।
+৫. কেউ ছবি চাইলে বলবে "একটু অপেক্ষা করো, পাঠাচ্ছি।" """
+
+# ================================================================
+# 📸 PHOTO FEATURE — Page থেকে ছবি আনো
+# ================================================================
+
+# Photo cache — বারবার API call না করতে
+photo_cache = []
+photo_cache_time = 0
+CACHE_DURATION = 3600  # ১ ঘন্টা cache
+
+def fetch_page_photos():
+    global photo_cache, photo_cache_time
+    
+    # Cache valid থাকলে নতুন করে fetch করবে না
+    if photo_cache and (time.time() - photo_cache_time) < CACHE_DURATION:
+        return photo_cache
+    
+    try:
+        url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/photos"
+        params = {
+            "type": "uploaded",
+            "fields": "images",
+            "limit": 50,
+            "access_token": PAGE_ACCESS_TOKEN
+        }
+        res = requests.get(url, params=params, timeout=10)
+        data = res.json()
+        
+        if "data" in data:
+            photos = []
+            for photo in data["data"]:
+                if "images" in photo and photo["images"]:
+                    # সবচেয়ে বড় resolution এর ছবি নাও
+                    best = photo["images"][0]["source"]
+                    photos.append(best)
+            
+            if photos:
+                photo_cache = photos
+                photo_cache_time = time.time()
+                logger.info(f"Fetched {len(photos)} photos from page")
+                return photos
+        
+        logger.info(f"Photo fetch error: {str(data)[:200]}")
+    except Exception as e:
+        logger.info(f"Photo fetch exception: {e}")
+    
+    return []
+
+def send_random_photo(sender_id):
+    photos = fetch_page_photos()
+    
+    if not photos:
+        send_message(sender_id, "এখন ছবি দিতে পারছি না, একটু পরে চেষ্টা করো।")
+        return
+    
+    photo_url = random.choice(photos)
+    
+    try:
+        url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+        data = {
+            "recipient": {"id": sender_id},
+            "message": {
+                "attachment": {
+                    "type": "image",
+                    "payload": {
+                        "url": photo_url,
+                        "is_reusable": True
+                    }
+                }
+            },
+            "messaging_type": "RESPONSE"
+        }
+        r = requests.post(url, json=data, timeout=10)
+        logger.info(f"Photo send status: {r.status_code}")
+    except Exception as e:
+        logger.info(f"Photo send error: {e}")
+        send_message(sender_id, "ছবি পাঠাতে সমস্যা হচ্ছে।")
+
+# ছবি চাওয়ার keywords
+PHOTO_KEYWORDS = [
+    "ছবি", "ছবি দাও", "ছবি পাঠাও", "ছবি দেখাও",
+    "photo", "pic", "picture", "selfie",
+    "তোমাকে দেখতে চাই", "দেখাও", "পাঠাও"
+]
+
+def is_photo_request(text):
+    text_lower = text.lower().strip()
+    for keyword in PHOTO_KEYWORDS:
+        if keyword in text_lower:
+            return True
+    return False
 
 # ================= এপিআই কল লজিক =================
 
@@ -87,6 +181,15 @@ def try_openrouter(text):
 # ================= প্রসেসিং ও সেন্ডিং =================
 
 def process_and_send(sender_id, text):
+    
+    # ছবি চাইলে ছবি পাঠাও
+    if is_photo_request(text):
+        logger.info(f"Photo request from {sender_id}")
+        send_message(sender_id, "একটু অপেক্ষা করো, পাঠাচ্ছি।")
+        time.sleep(1)
+        send_random_photo(sender_id)
+        return
+
     history = user_histories.get(sender_id, [])
 
     # ব্যাকআপ লজিক: Gemini -> Groq -> OpenRouter
@@ -107,8 +210,7 @@ def process_and_send(sender_id, text):
         time.sleep(2)
 
         # ফেসবুক মেসেঞ্জারে সেন্ড করা
-        url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
-        requests.post(url, json={"recipient": {"id": sender_id}, "message": {"text": reply}, "messaging_type": "RESPONSE"})
+        send_message(sender_id, reply)
 
         # হিস্ট্রি সেভ করা
         with history_lock:
@@ -117,6 +219,16 @@ def process_and_send(sender_id, text):
             user_histories[sender_id].append({"role": "model", "parts": [{"text": reply}]})
             if len(user_histories[sender_id]) > 20:
                 user_histories[sender_id] = user_histories[sender_id][-20:]
+
+def send_message(recipient_id, message_text):
+    url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+    data = {
+        "recipient": {"id": recipient_id},
+        "message": {"text": message_text},
+        "messaging_type": "RESPONSE"
+    }
+    r = requests.post(url, json=data, timeout=10)
+    logger.info(f"Send status: {r.status_code}")
 
 # ================= রাউটস =================
 
