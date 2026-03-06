@@ -6,16 +6,13 @@ import requests
 import logging
 from flask import Flask, request
 
-# লগিং সেটআপ
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# এনভায়রনমেন্ট ভেরিয়েবল
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
-PAGE_ID = "1419698638998242"
 
 def load_keys(prefix):
     keys = []
@@ -28,7 +25,6 @@ GEMINI_KEYS = load_keys("GEMINI_KEY")
 GROQ_KEYS = load_keys("GROQ_KEY")
 OPENROUTER_KEYS = load_keys("OPENROUTER_KEY")
 
-# ইনডেক্স ট্র্যাকিং
 indices = {"gemini": 0, "groq": 0, "openrouter": 0}
 index_lock = threading.Lock()
 
@@ -46,61 +42,38 @@ SYSTEM_PROMPT = """তুমি মায়া। বয়স ২৩। তু
 ৫. কেউ ছবি চাইলে বলবে "একটু অপেক্ষা করো, পাঠাচ্ছি।" """
 
 # ================================================================
-# 📸 PHOTO FEATURE — Page থেকে ছবি আনো
+# 📸 MAYA এর ছবির URL LIST
+# নতুন ছবি যোগ করতে চাইলে নিচে আরো URL যোগ করো
 # ================================================================
+PHOTO_URLS = [
+    "https://scontent.fdac177-2.fna.fbcdn.net/v/t39.30808-6/647369968_122276022374063013_792759441609361388_n.jpg?_nc_cat=109&ccb=1-7&_nc_sid=7b2446&_nc_ohc=rslG7poueU0Q7kNvwEFOZuk&_nc_oc=Adn9RKgsaMclCyKkshR50iRILj-N8n6MqlBhjIMVcuoWRiV3F3lJ8N-A-lNVqIrBeeM&_nc_zt=23&_nc_ht=scontent.fdac177-2.fna&_nc_gid=1E5qv4FB7BYr7wc6vgvbuQ&_nc_ss=8&oh=00_AfzOfHgJ7qcpMErKJA1BcK8zqgFgkVRiH8_gSDB1AO81gQ&oe=69B0D7F4",
+    "https://scontent.fdac177-1.fna.fbcdn.net/v/t39.30808-6/648852525_122276021756063013_8333340216816946825_n.jpg?_nc_cat=102&ccb=1-7&_nc_sid=7b2446&_nc_ohc=XLbNjLEj1sgQ7kNvwGjzoi7&_nc_oc=Adld7dke2uL_PBEgW4L0-W3--YQVmd5ru64u4LqhAyLwWFM05YlOwGwusinprcH8iLw&_nc_zt=23&_nc_ht=scontent.fdac177-1.fna&_nc_gid=uD2sTCIjbJ45RJlY_y5dcQ&_nc_ss=8&oh=00_AfwXRhtI_BDAyhash_aOh3qlTKbaBfxhceFs-Ms0jCcX0w&oe=69B0AF1A",
+    "https://scontent.fdac177-2.fna.fbcdn.net/v/t39.30808-6/646590781_122276022248063013_6175864976625292902_n.jpg?_nc_cat=104&ccb=1-7&_nc_sid=7b2446&_nc_ohc=XCI96kE2XHMQ7kNvwF2bI6n&_nc_oc=AdkEIlt4-3JV5NCclpgvvpkY7AUwkhNzI3FwYsJTf0sAr1Ii9OjNmEwB9FLAUmX2Ivs&_nc_zt=23&_nc_ht=scontent.fdac177-2.fna&_nc_gid=Mk-j45IKZNGgk40Ey68d4w&_nc_ss=8&oh=00_AfwRVVCOqMjJJRyoVrySgIDCfm7XN6lmOTPTCXO0Ojt3tg&oe=69B0C6C6",
+    "https://scontent.fdac177-1.fna.fbcdn.net/v/t39.30808-6/647337767_122276022986063013_3939663716476616136_n.jpg?_nc_cat=106&ccb=1-7&_nc_sid=7b2446&_nc_ohc=DvB6Hhh0grsQ7kNvwFTnTsP&_nc_oc=Adk_pTAmrdW1pjMuIxtFZgxoMqcUtSO-hyHgLWIwejJfnMAgIZ1cOalFXxMWd6YLgOw&_nc_zt=23&_nc_ht=scontent.fdac177-1.fna&_nc_gid=hrtvmELkqDu4CvseoKJLwA&_nc_ss=8&oh=00_AfxMRG0NK2vlsZUhqX4psLLtxDe87TASQB69PwUITaviMQ&oe=69B0CB58",
+    "https://scontent.fdac177-1.fna.fbcdn.net/v/t39.30808-6/646212531_122276023598063013_903163510803281711_n.jpg?_nc_cat=103&ccb=1-7&_nc_sid=7b2446&_nc_ohc=7qQBkljkq5IQ7kNvwF0ZZTO&_nc_oc=AdmGWq6A8CucodQ7zGY1WVo4jflTN-u9nkVOMraLkINMQp4SI2tlW2phkiaWjj1mQM8&_nc_zt=23&_nc_ht=scontent.fdac177-1.fna&_nc_gid=4nqPTREaSJELvrETbhruHA&_nc_ss=8&oh=00_AfwRi5VKzgN3mYNfM8POfz8YwB4F7modBUr9T3slng3OhQ&oe=69B0B743",
+    "https://scontent.fdac177-2.fna.fbcdn.net/v/t39.30808-6/648509883_122276023634063013_5800126571586611470_n.jpg?_nc_cat=109&ccb=1-7&_nc_sid=7b2446&_nc_ohc=OX6usLGubgUQ7kNvwHEawZt&_nc_oc=AdliQt1oVIGt_YUQTUq2V1YwHGc3FQlp6DJQfJKVLGGM_TdNavgNdS1TuYoLVUpnVF4&_nc_zt=23&_nc_ht=scontent.fdac177-2.fna&_nc_gid=2X53YP0D6CPWXp21R3Ge2g&_nc_ss=8&oh=00_AfzmEZBiL_RSIVDACO0F78pOm6VQOyX6OTmr2CII9XYMLw&oe=69B0CCE9",
+    "https://scontent.fdac177-1.fna.fbcdn.net/v/t39.30808-6/646379829_122276023610063013_4102578124562935709_n.jpg?_nc_cat=108&ccb=1-7&_nc_sid=7b2446&_nc_ohc=lquPduUyF-QQ7kNvwH15dJL&_nc_oc=AdmTd1oy-GUnxTC-7_BW_pk_WfpAcDP6gyZpMoVPM3Vjg4vAHKcSkb5gMrkK_2c8pwI&_nc_zt=23&_nc_ht=scontent.fdac177-1.fna&_nc_gid=_Ve9MSO4r6SC30fkyEOwVA&_nc_ss=8&oh=00_AfxZCeHm8q_vFbIWHvPjaaHrs-0FABQ4TRz4_xZLMiFZMg&oe=69B0C608",
+    "https://scontent.fdac177-1.fna.fbcdn.net/v/t39.30808-6/646391228_122276023622063013_8733331366598407606_n.jpg?_nc_cat=108&ccb=1-7&_nc_sid=7b2446&_nc_ohc=TeD6kPNs3B0Q7kNvwHKBe5Y&_nc_oc=AdlcVIkk8tp2eWn0_QEqn6FMEdj2l6MR655BkOvbOJ-ipOuje-Od36fLGrUVIfGFmd0&_nc_zt=23&_nc_ht=scontent.fdac177-1.fna&_nc_gid=teGlPN12hXZuFwObVD3UQQ&_nc_ss=8&oh=00_Afz8oDIHkP9F6aXLyHwMeZEiqpJyQ3zssa08t75BQVw4vw&oe=69B0BC22",
+    "https://scontent.fdac177-2.fna.fbcdn.net/v/t39.30808-6/648724280_122276023658063013_3206676873394733752_n.jpg?_nc_cat=111&ccb=1-7&_nc_sid=7b2446&_nc_ohc=CVO6PcpihZcQ7kNvwEzeL5U&_nc_oc=AdkI_gfAUDUrCFLKkVq8hPdNkLngfxVLnLTp68cteRNSRU1tJUV-_ZDubSMG5FXKnSU&_nc_zt=23&_nc_ht=scontent.fdac177-2.fna&_nc_gid=Fw5fhAaH9gh-XbskGxinJg&_nc_ss=8&oh=00_AfzV1p04aUMHgD9MowNeL-4FiLC8RNRy2hLsOAYqOrXfPw&oe=69B0CEF7",
+    "https://scontent.fdac177-1.fna.fbcdn.net/v/t39.30808-6/646780653_122276024306063013_4682418701139895048_n.jpg?_nc_cat=108&ccb=1-7&_nc_sid=7b2446&_nc_ohc=lgzSJUP4wCoQ7kNvwHE_Zr5&_nc_oc=Adk1Q-HhDWbZ2cnEoMcIsb6ZhqTzl57f038cSsbEnnQ_YDkmvKBwdLC3gVUmTSDksxY&_nc_zt=23&_nc_ht=scontent.fdac177-1.fna&_nc_gid=jxLjBvQfGkblSvZaQQ05Gw&_nc_ss=8&oh=00_AfwfB0jkkz5E9L4N5hyloQSqbs8L8lCRkDQdF0zT6GcICg&oe=69B0CC21",
+]
 
-# Photo cache — বারবার API call না করতে
-photo_cache = []
-photo_cache_time = 0
-CACHE_DURATION = 3600  # ১ ঘন্টা cache
+# ছবি চাওয়ার keywords
+PHOTO_KEYWORDS = [
+    "ছবি", "ছবি দাও", "ছবি পাঠাও", "ছবি দেখাও",
+    "photo", "pic", "picture", "selfie",
+    "তোমাকে দেখতে চাই", "দেখাও", "পাঠাও"
+]
 
-def fetch_page_photos():
-    global photo_cache, photo_cache_time
-    
-    # Cache valid থাকলে নতুন করে fetch করবে না
-    if photo_cache and (time.time() - photo_cache_time) < CACHE_DURATION:
-        return photo_cache
-    
-    try:
-        url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/photos"
-        params = {
-            "type": "uploaded",
-            "fields": "images",
-            "limit": 50,
-            "access_token": PAGE_ACCESS_TOKEN
-        }
-        res = requests.get(url, params=params, timeout=10)
-        data = res.json()
-        
-        if "data" in data:
-            photos = []
-            for photo in data["data"]:
-                if "images" in photo and photo["images"]:
-                    # সবচেয়ে বড় resolution এর ছবি নাও
-                    best = photo["images"][0]["source"]
-                    photos.append(best)
-            
-            if photos:
-                photo_cache = photos
-                photo_cache_time = time.time()
-                logger.info(f"Fetched {len(photos)} photos from page")
-                return photos
-        
-        logger.info(f"Photo fetch error: {str(data)[:200]}")
-    except Exception as e:
-        logger.info(f"Photo fetch exception: {e}")
-    
-    return []
+def is_photo_request(text):
+    text_lower = text.lower().strip()
+    for keyword in PHOTO_KEYWORDS:
+        if keyword in text_lower:
+            return True
+    return False
 
 def send_random_photo(sender_id):
-    photos = fetch_page_photos()
-    
-    if not photos:
-        send_message(sender_id, "এখন ছবি দিতে পারছি না, একটু পরে চেষ্টা করো।")
-        return
-    
-    photo_url = random.choice(photos)
-    
+    photo_url = random.choice(PHOTO_URLS)
     try:
         url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
         data = {
@@ -122,21 +95,7 @@ def send_random_photo(sender_id):
         logger.info(f"Photo send error: {e}")
         send_message(sender_id, "ছবি পাঠাতে সমস্যা হচ্ছে।")
 
-# ছবি চাওয়ার keywords
-PHOTO_KEYWORDS = [
-    "ছবি", "ছবি দাও", "ছবি পাঠাও", "ছবি দেখাও",
-    "photo", "pic", "picture", "selfie",
-    "তোমাকে দেখতে চাই", "দেখাও", "পাঠাও"
-]
-
-def is_photo_request(text):
-    text_lower = text.lower().strip()
-    for keyword in PHOTO_KEYWORDS:
-        if keyword in text_lower:
-            return True
-    return False
-
-# ================= এপিআই কল লজিক =================
+# ================= API CALLS =================
 
 def get_key(api_type, keys_list):
     global indices
@@ -178,10 +137,10 @@ def try_openrouter(text):
         return res.json()['choices'][0]['message']['content'].strip()
     except: return None
 
-# ================= প্রসেসিং ও সেন্ডিং =================
+# ================= প্রসেসিং =================
 
 def process_and_send(sender_id, text):
-    
+
     # ছবি চাইলে ছবি পাঠাও
     if is_photo_request(text):
         logger.info(f"Photo request from {sender_id}")
@@ -192,7 +151,6 @@ def process_and_send(sender_id, text):
 
     history = user_histories.get(sender_id, [])
 
-    # ব্যাকআপ লজিক: Gemini -> Groq -> OpenRouter
     reply = try_gemini(history, text)
     if not reply:
         logger.info("Gemini failed, trying Groq...")
@@ -202,17 +160,11 @@ def process_and_send(sender_id, text):
         reply = try_openrouter(text)
 
     if reply:
-        # দাঁড়ি ও ফরম্যাট নিশ্চিত করা
         reply = " ".join(reply.split()).replace('\n', ' ')
         if not reply.endswith(('।', '?', '!')): reply += '।'
-
-        # স্বাভাবিক ছোট বিরতি
         time.sleep(2)
-
-        # ফেসবুক মেসেঞ্জারে সেন্ড করা
         send_message(sender_id, reply)
 
-        # হিস্ট্রি সেভ করা
         with history_lock:
             if sender_id not in user_histories: user_histories[sender_id] = []
             user_histories[sender_id].append({"role": "user", "parts": [{"text": text}]})
@@ -230,7 +182,7 @@ def send_message(recipient_id, message_text):
     r = requests.post(url, json=data, timeout=10)
     logger.info(f"Send status: {r.status_code}")
 
-# ================= রাউটস =================
+# ================= ROUTES =================
 
 @app.route("/webhook", methods=["GET"])
 def verify():
