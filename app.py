@@ -279,14 +279,24 @@ def index(): return "Maya is running!"
 @app.route("/ping")
 def ping(): return "PONG", 200
 
-# ================================================================
-# ✅ Bot start হওয়ার সময় Page subscribe করো
-# ================================================================
-def startup():
-    time.sleep(5)  # bot পুরো start হওয়ার পর
-    subscribe_page_to_feed()
-
-threading.Thread(target=startup, daemon=True).start()
+@app.route("/subscribe")
+def subscribe():
+    try:
+        url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/subscribed_apps"
+        params = {
+            "subscribed_fields": "feed,messages,messaging_postbacks",
+            "access_token": PAGE_ACCESS_TOKEN
+        }
+        r = requests.post(url, params=params, timeout=10)
+        data = r.json()
+        if data.get("success"):
+            logger.info("✅ Page successfully subscribed to feed!")
+            return "✅ Page subscribed successfully!", 200
+        else:
+            logger.info(f"⚠️ Subscription response: {data}")
+            return f"⚠️ Response: {data}", 200
+    except Exception as e:
+        return f"Error: {e}", 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
