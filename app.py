@@ -4,7 +4,7 @@ import random
 import threading
 import requests
 import logging
-from flask import Flask, request, jsonify
+from flask import Flask, request
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ SYSTEM_PROMPT = """তুমি মায়া। বয়স ২৩। তু
 ৫. কেউ ছবি চাইলে বলবে "একটু অপেক্ষা করো, পাঠাচ্ছি।" """
 
 COMMENT_PROMPT = """তুমি মায়া। বয়স ২৩। একজন বাংলাদেশী মেয়ে।
-কেউ তোমার Facebook post এ comment করেছে। তুমি সেই comment এর reply দেবে।
+কেউ তোমার Facebook post এ comment করেছে। সেই comment এর reply দাও।
 ১. reply সব সময় ছোট ১ লাইনে দিবে।
 ২. স্বাভাবিক বাংলায় কথা বলবে।
 ৩. বন্ধুত্বপূর্ণ এবং মিষ্টি ভাবে reply করবে।
@@ -140,7 +140,6 @@ def get_key(api_type, keys_list):
         return key
 
 def get_ai_reply(prompt, text, history=None):
-    # Gemini
     key = get_key("gemini", GEMINI_KEYS)
     if key:
         try:
@@ -153,7 +152,6 @@ def get_ai_reply(prompt, text, history=None):
                 return data['candidates'][0]['content']['parts'][0]['text'].strip()
         except: pass
 
-    # Groq
     key = get_key("groq", GROQ_KEYS)
     if key:
         try:
@@ -163,7 +161,6 @@ def get_ai_reply(prompt, text, history=None):
             return res.json()['choices'][0]['message']['content'].strip()
         except: pass
 
-    # OpenRouter
     key = get_key("openrouter", OPENROUTER_KEYS)
     if key:
         try:
@@ -184,12 +181,11 @@ def reply_to_comment(comment_id, comment_text):
             return
         reply = " ".join(reply.split()).replace('\n', ' ')
         if not reply.endswith(('।', '?', '!')): reply += '।'
-
         url = f"https://graph.facebook.com/v18.0/{comment_id}/comments"
         params = {"access_token": PAGE_ACCESS_TOKEN}
         data = {"message": reply}
         r = requests.post(url, params=params, json=data, timeout=10)
-        logger.info(f"Comment reply status: {r.status_code} | comment: {comment_text[:50]}")
+        logger.info(f"Comment reply status: {r.status_code} | {comment_text[:50]}")
     except Exception as e:
         logger.info(f"Comment reply error: {e}")
 
@@ -235,31 +231,27 @@ def verify():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
-
     if data.get("object") == "page":
         for entry in data.get("entry", []):
 
-            # ✅ Messenger message
+            # Messenger message
             for event in entry.get("messaging", []):
                 if "message" in event and "text" in event["message"]:
                     sender_id = event["sender"]["id"]
                     user_text = event["message"]["text"]
                     threading.Thread(target=process_and_send, args=(sender_id, user_text)).start()
 
-            # ✅ Page comment reply
+            # Page comment
             for change in entry.get("changes", []):
                 value = change.get("value", {})
-                item = value.get("item", "")
-                verb = value.get("verb", "")
-
-                if item == "comment" and verb == "add":
+                if value.get("item") == "comment" and value.get("verb") == "add":
                     comment_id = value.get("comment_id") or value.get("id")
                     comment_text = value.get("message", "")
                     if comment_id and comment_text:
                         logger.info(f"New comment: {comment_text[:50]}")
                         threading.Thread(target=reply_to_comment, args=(comment_id, comment_text)).start()
 
-    return jsonify({"status": "ok"}), 200
+    return "OK", 200
 
 @app.route("/")
 def index(): return "Maya is running!"
