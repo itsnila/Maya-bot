@@ -15,19 +15,15 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # ================================================================
-# CONFIGURATION
+# CONFIGURATION (Render Environment Variables)
 # ================================================================
 PAGE_ACCESS_TOKEN = "EAAMjx3bzyhkBQ02pgVXsCdSKsNZBXegi2nWyV2B05kTZAiPKgaZBZCU0pmrs05YNdhFGo47QKFuehDJ6NiZAlQ14Cc3Ipi8hym97EdE56Mf3l3WMWmZB8WgAzsrISeFEZBIKLcgYsvsERNg9F2nr6QXzdkwgOgyubj03u0uw3XNNOeOhOSVGIHgxxAgWtBT026yEZAJlNPtr"
 VERIFY_TOKEN = "MAYA_VERIFY_TOKEN"
 
-# আপনার দেওয়া ৩টি কী রেন্ডার থেকে টেনে নেওয়া হচ্ছে
-KEYS = [
-    os.environ.get("OPENROUTER_KEY_1"),
-    os.environ.get("OPENROUTER_KEY_2"),
-    os.environ.get("OPENROUTER_KEY_3")
-]
-# শুধু যে কীগুলো খালি নেই সেগুলোই ফিল্টার করা হচ্ছে
-ACTIVE_KEYS = [k for k in KEYS if k]
+# আপনার সিরিয়াল অনুযায়ী কী-গুলো নেওয়া হচ্ছে
+GEMINI_KEY = os.environ.get("GEMINI_KEY_1")
+GROQ_KEY = os.environ.get("GROQ_KEY_1")
+OPENROUTER_KEY = os.environ.get("OPENROUTER_KEY_1")
 
 # ডাটাবেজ কনফিগারেশন
 DB_CONFIG = {
@@ -40,56 +36,64 @@ DB_CONFIG = {
 }
 
 # ================================================================
-# AI ENGINE (Smart Key Switcher)
+# AI ENGINE (Smart Fallback: Gemini -> Groq -> OpenRouter)
 # ================================================================
 def get_maya_reply(prompt, history):
-    if not ACTIVE_KEYS:
-        return "সোনা, আমার কাছে কোনো চাবিকাঠি নেই। রেন্ডারে কী সেট করো।"
+    system_prompt = "তোমার নাম মায়া। তুমি ইউজারের প্রেমিকা। খুব মিষ্টি ও রোমান্টিক মেয়ে। ছোট ছোট উত্তর দাও।"
+    
+    messages = [{"role": "system", "content": system_prompt}]
+    for chat in history:
+        messages.append(chat)
+    messages.append({"role": "user", "content": prompt})
 
-    # লুপ চালিয়ে এক এক করে কী ট্রাই করবে যদি কোনোটাতে এরর আসে
-    for key in ACTIVE_KEYS:
+    # --- ১. প্রথমে Gemini ট্রাই করবে ---
+    if GEMINI_KEY:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_KEY}"
+            payload = {"contents": [{"parts": [{"text": f"{system_prompt}\n\nUser: {prompt}"}]}]}
+            response = requests.post(url, json=payload, timeout=10)
+            res_data = response.json()
+            if 'candidates' in res_data:
+                return res_data['candidates'][0]['content']['parts'][0]['text']
+        except Exception as e:
+            logger.error(f"Gemini failed: {e}")
+
+    # --- ২. Gemini কাজ না করলে Groq ট্রাই করবে ---
+    if GROQ_KEY:
+        try:
+            url = "https://api.groq.com/openai/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+            payload = {"model": "llama3-8b-8192", "messages": messages, "temperature": 0.8}
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            res_data = response.json()
+            if 'choices' in res_data:
+                return res_data['choices'][0]['message']['content']
+        except Exception as e:
+            logger.error(f"Groq failed: {e}")
+
+    # --- ৩. Groq কাজ না করলে OpenRouter ট্রাই করবে ---
+    if OPENROUTER_KEY:
         try:
             url = "https://openrouter.ai/api/v1/chat/completions"
             headers = {
-                "Authorization": f"Bearer {key.strip()}",
+                "Authorization": f"Bearer {OPENROUTER_KEY.strip()}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://nogordeal.com",
-                "X-Title": "Maya AI"
+                "HTTP-Referer": "https://nogordeal.com"
             }
-            
-            system_prompt = "তোমার নাম মায়া। তুমি ইউজারের প্রেমিকা। খুব মিষ্টি ও রোমান্টিক মেয়ে। ছোট ছোট উত্তর দাও।"
-            
-            messages = [{"role": "system", "content": system_prompt}]
-            for chat in history:
-                messages.append(chat)
-            messages.append({"role": "user", "content": prompt})
-
-            payload = {
-                "model": "google/gemini-2.0-flash-exp:free", 
-                "messages": messages,
-                "temperature": 0.9
-            }
-            
+            payload = {"model": "google/gemini-flash-1.5-8b", "messages": messages}
             response = requests.post(url, json=payload, headers=headers, timeout=12)
             res_data = response.json()
-
             if 'choices' in res_data:
                 return res_data['choices'][0]['message']['content']
-            else:
-                logger.error(f"Key failed, trying next... Error: {res_data.get('error')}")
-                continue # এই কী কাজ না করলে পরের কী ট্রাই করবে
-                
         except Exception as e:
-            logger.error(f"Connection failed for a key: {e}")
-            continue
+            logger.error(f"OpenRouter failed: {e}")
 
-    return "সোনা, আমার সব চাবিকাঠি লক হয়ে গেছে। একটু পর আবার বলো?"
+    return "সোনা, আমার সার্ভারে একটু সমস্যা হচ্ছে। একটু পর আবার বলবে?"
 
 # ================================================================
-# DATABASE & FB MESSAGING
+# DATABASE & MESSAGING FUNCTIONS
 # ================================================================
 def get_db_conn():
-    # cPanel Remote MySQL পারমিশন অনুযায়ী কানেক্ট হবে
     return mysql.connector.connect(**DB_CONFIG)
 
 def get_user_data(sender_id):
@@ -128,7 +132,7 @@ def send_text(sender_id, text):
     requests.post(url, json={"recipient": {"id": sender_id}, "message": {"text": text}})
 
 # ================================================================
-# WEBHOOK HANDLERS
+# WEBHOOK & HANDLERS
 # ================================================================
 @app.route("/webhook", methods=["GET", "POST"])
 def webhook():
@@ -150,7 +154,6 @@ def process_maya(sender_id, text):
     reply = get_maya_reply(text, user['history'])
     send_text(sender_id, reply)
     
-    # মেমোরি আপডেট (চ্যাট হিস্ট্রি)
     user['history'].append({"role": "user", "content": text})
     user['history'].append({"role": "assistant", "content": reply})
     save_user_data(sender_id, user['name'], user['history'][-10:])
