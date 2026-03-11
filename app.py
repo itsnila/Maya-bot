@@ -9,18 +9,19 @@ from flask import Flask, request
 app = Flask(__name__)
 
 # ================================================================
-# CONFIGURATION (Render Environment Variables)
+# CONFIGURATION
 # ================================================================
 PAGE_ACCESS_TOKEN = "EAAMjx3bzyhkBQ02pgVXsCdSKsNZBXegi2nWyV2B05kTZAiPKgaZBZCU0pmrs05YNdhFGo47QKFuehDJ6NiZAlQ14Cc3Ipi8hym97EdE56Mf3l3WMWmZB8WgAzsrISeFEZBIKLcgYsvsERNg9F2nr6QXzdkwgOgyubj03u0uw3XNNOeOhOSVGIHgxxAgWtBT026yEZAJlNPtr"
 VERIFY_TOKEN = "MAYA_VERIFY_TOKEN"
 
-# কী-গুলোর নাম রেন্ডার অনুযায়ী চেক করে নিন
+# API Keys from Render Environment
 KEYS = {
     "gemini": os.environ.get("GEMINI_KEY_1"),
     "groq": os.environ.get("GROQ_KEY_1"),
     "openrouter": os.environ.get("OPENROUTER_KEY_1")
 }
 
+# DB Config (Using your verified host and DB)
 DB_CONFIG = {
     'host': '161.248.189.34',
     'user': 'nogorde1_maya',
@@ -30,7 +31,7 @@ DB_CONFIG = {
 }
 
 # ================================================================
-# AI ENGINE (Solid Fallback)
+# AI FALLBACK SYSTEM
 # ================================================================
 def get_maya_reply(prompt):
     system_prompt = "তোমার নাম মায়া। তুমি ইউজারের প্রেমিকা। মিষ্টি ও রোমান্টিক ভাবে ছোট উত্তর দাও।"
@@ -53,38 +54,31 @@ def get_maya_reply(prompt):
             if 'choices' in res: return res['choices'][0]['message']['content']
         except: pass
 
-    # ৩. OpenRouter ট্রাই (সর্বশেষ ব্যাকআপ)
-    if KEYS["openrouter"]:
-        try:
-            url = "https://openrouter.ai/api/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {KEYS['openrouter'].strip()}", "Content-Type": "application/json"}
-            res = requests.post(url, json={"model": "google/gemini-flash-1.5-8b", "messages": [{"role": "user", "content": prompt}]}, timeout=10).json()
-            if 'choices' in res: return res['choices'][0]['message']['content']
-        except: pass
-
-    return "সোনা, আমার নেটওয়ার্কে খুব সমস্যা হচ্ছে। একটু পর বলবে?"
+    return "সোনা, আমি একটু বিজি আছি। পরে কথা বলি?"
 
 # ================================================================
-# DB & MESSAGING
+# DB HANDLING (Fixed to use 'users' table)
 # ================================================================
 def handle_maya(sender_id, text):
     reply = get_maya_reply(text)
     
-    # মেসেজ পাঠানো
+    # Send Reply to Facebook
     url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
     requests.post(url, json={"recipient": {"id": sender_id}, "message": {"text": reply}})
     
-    # ডাটাবেজে সেভ (টেবিল চেক সহ)
+    # Save to your existing 'users' table
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
-        cursor.execute("CREATE TABLE IF NOT EXISTS users (sender_id VARCHAR(50) PRIMARY KEY, history TEXT, last_seen INT)")
-        cursor.execute("INSERT INTO users (sender_id, history, last_seen) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE history=%s, last_seen=%s", 
-                       (sender_id, reply[:100], int(time.time()), reply[:100], int(time.time())))
+        # এখানে 'chats' এর বদলে 'users' টেবিল ব্যবহার করা হয়েছে
+        query = """INSERT INTO users (sender_id, history, last_seen) VALUES (%s, %s, %s) 
+                   ON DUPLICATE KEY UPDATE history=%s, last_seen=%s"""
+        cursor.execute(query, (sender_id, reply[:100], int(time.time()), reply[:100], int(time.time())))
         conn.commit()
         cursor.close()
         conn.close()
-    except: pass
+    except Exception as e:
+        print(f"DB Error: {e}")
 
 @app.route("/webhook", methods=["GET", "POST"])
 def webhook():
