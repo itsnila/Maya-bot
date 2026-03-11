@@ -89,31 +89,22 @@ def init_db():
     finally:
         conn.close()
 
-def fetch_fb_name(sender_id):
-    """Facebook থেকে user এর নাম নিয়ে আসো"""
+def is_new_user(sender_id):
+    """User নতুন কিনা চেক করো"""
+    conn = get_db()
+    if not conn: return False
     try:
-        url = f"https://graph.facebook.com/v18.0/{sender_id}?fields=name,first_name&access_token={PAGE_ACCESS_TOKEN}"
-        r = requests.get(url, timeout=5)
-        data = r.json()
-        if 'first_name' in data:
-            return data['first_name']
-        elif 'name' in data:
-            return data['name'].split()[0]
-    except Exception as e:
-        logger.error(f"FB name fetch error: {e}")
-    return None
+        with conn.cursor() as c:
+            c.execute("SELECT message_count FROM users WHERE id=%s", (sender_id,))
+            row = c.fetchone()
+            return row is None or row['message_count'] <= 1
+    except: return False
+    finally: conn.close()
 
 def db_save_user(sender_id, name=None):
     conn = get_db()
     if not conn: return
     try:
-        # নাম না থাকলে Facebook থেকে নিয়ে আসো
-        if not name:
-            existing = db_get_user_name(sender_id)
-            if not existing:
-                name = fetch_fb_name(sender_id)
-                logger.info(f"FB name fetched: {name} for {sender_id}")
-
         with conn.cursor() as c:
             c.execute("""INSERT INTO users (id, name, last_seen, message_count)
                 VALUES (%s, %s, NOW(), 1)
@@ -495,9 +486,20 @@ def get_ai_reply(prompt, text, history=None):
 def process_and_send(sender_id, text):
     send_seen(sender_id)
     send_typing(sender_id)
+
+    # নতুন user হলে নাম জিজ্ঞেস করো
+    new_user = is_new_user(sender_id)
     db_save_user(sender_id)
     db_save_message(sender_id, 'in', text)
-    detect_and_save_name(sender_id, text)
+
+    # নাম detect করো
+    detected = detect_and_save_name(sender_id, text)
+
+    # নতুন user — নাম জানা নেই — নাম জিজ্ঞেস করো
+    if new_user and not detected and not db_get_user_name(sender_id):
+        time.sleep(1)
+        send_message(sender_id, "আমি মায়া। তোমার নামটা বলো না, তোমাকে নাম ধরে ডাকতে চাই।")
+        return
 
     if is_photo_request(text):
         send_message(sender_id, "একটু অপেক্ষা করো, পাঠাচ্ছি।", save=False)
