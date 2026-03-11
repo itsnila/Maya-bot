@@ -1,3 +1,4 @@
 flask
 requests
 gunicorn
+mysql-connector-python
