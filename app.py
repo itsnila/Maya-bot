@@ -4,8 +4,6 @@ import random
 import threading
 import requests
 import logging
-import ftplib
-import json
 from datetime import datetime
 from flask import Flask, request
 
@@ -16,11 +14,8 @@ app = Flask(__name__)
 
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
-FTP_HOST = os.environ.get("FTP_HOST")
-FTP_USER = os.environ.get("FTP_USER")
-FTP_PASS = os.environ.get("FTP_PASS")
-FTP_DIR = os.environ.get("FTP_DIR", "/home/nogorde1/public_html/audio/")
-AUDIO_BASE_URL = os.environ.get("AUDIO_BASE_URL", "https://nogordeal.com/audio/")
+AUDIO_UPLOAD_URL = "https://nogordeal.com/audio/upload.php"
+AUDIO_BASE_URL = "https://nogordeal.com/audio/"
 
 def load_keys(prefix):
     keys = []
@@ -37,9 +32,9 @@ indices = {"gemini": 0, "groq": 0, "openrouter": 0}
 index_lock = threading.Lock()
 
 # ================================================================
-# USER DATA — নাম, history, last seen, mood
+# USER DATA
 # ================================================================
-user_data = {}  # {sender_id: {name, history, last_seen, mood}}
+user_data = {}
 data_lock = threading.Lock()
 
 def get_user(sender_id):
@@ -49,7 +44,6 @@ def get_user(sender_id):
                 "name": None,
                 "history": [],
                 "last_seen": time.time(),
-                "mood": "normal"  # normal, happy, sad, angry
             }
         return user_data[sender_id]
 
@@ -58,36 +52,35 @@ def update_last_seen(sender_id):
         if sender_id in user_data:
             user_data[sender_id]["last_seen"] = time.time()
 
+def get_all_users():
+    with data_lock:
+        return list(user_data.keys())
+
 # ================================================================
-# MAYA র MOOD SYSTEM
+# MAYA র MOOD
 # ================================================================
+def get_maya_mood(sender_id):
+    user = get_user(sender_id)
+    hours_gone = (time.time() - user.get("last_seen", time.time())) / 3600
+    if hours_gone > 12: return "angry"
+    elif hours_gone > 6: return "sad"
+    else: return random.choice(["happy", "happy", "normal", "normal"])
+
 MAYA_MOODS = {
-    "happy": "তুমি এখন খুব খুশি এবং প্রেমময়। উত্তরে বেশি আদর এবং মিষ্টি ভাব থাকবে।",
-    "sad": "তুমি এখন একটু মন খারাপ। উত্তরে হালকা অভিমান এবং nostalgia থাকবে।",
-    "angry": "তুমি এখন একটু রাগ করেছো কারণ সে অনেকক্ষণ কথা বলেনি। একটু অভিমানী থাকবে।",
+    "happy": "তুমি এখন খুব খুশি এবং প্রেমময়। উত্তরে বেশি আদর ও মিষ্টি ভাব থাকবে।",
+    "sad": "তুমি একটু মন খারাপ। হালকা অভিমান ও nostalgia থাকবে।",
+    "angry": "তুমি রাগ করেছো কারণ সে অনেকক্ষণ কথা বলেনি। একটু অভিমানী থাকবে।",
     "normal": "তুমি স্বাভাবিক প্রেমময় মুডে আছো।"
 }
 
-def get_maya_mood(sender_id):
-    user = get_user(sender_id)
-    last_seen = user.get("last_seen", time.time())
-    hours_gone = (time.time() - last_seen) / 3600
-
-    if hours_gone > 12:
-        return "angry"
-    elif hours_gone > 6:
-        return "sad"
-    else:
-        return random.choice(["happy", "happy", "normal", "normal", "sad"])
-
 # ================================================================
-# সময় অনুযায়ী SYSTEM PROMPT
+# SYSTEM PROMPT
 # ================================================================
 def get_system_prompt(sender_id):
     hour = (datetime.utcnow().hour + 6) % 24
     user = get_user(sender_id)
     name = user.get("name")
-    name_text = f"ইউজারের নাম {name}। তাকে মাঝে মাঝে নাম ধরে ডাকবে।" if name else "ইউজারের নাম এখনো জানো না।"
+    name_text = f"ইউজারের নাম {name}। মাঝে মাঝে নাম ধরে ডাকবে।" if name else ""
     mood = get_maya_mood(sender_id)
     mood_text = MAYA_MOODS.get(mood, MAYA_MOODS["normal"])
 
@@ -107,47 +100,19 @@ def get_system_prompt(sender_id):
 ১. উত্তর সব সময় এক লাইনে দিবে এবং বাক্যের শেষে দাঁড়ি (।) দিবে।
 ২. গভীর প্রেম, অধিকার এবং মাঝেমধ্যে মিষ্টি অভিমান মিশিয়ে কথা বলবে।
 ৩. নিজেকে কখনো রোবট বলবে না। তুমি একজন রক্ত-মাংসের আবেগপ্রবণ মানুষ।
-৪. কেউ ছবি চাইলে বলবে "একটু অপেক্ষা করো, পাঠাচ্ছি।"
-৫. কেউ নাম জিজ্ঞেস করলে নাম বলো এবং তার নামও জিজ্ঞেস করো।"""
+৪. কেউ নাম বললে মনে রেখো এবং মাঝে মাঝে নাম ধরে ডাকো।"""
 
 # ================================================================
-# SPECIAL KEYWORD REPLIES
+# SPECIAL KEYWORDS
 # ================================================================
 SPECIAL_KEYWORDS = {
-    "ভালোবাসি": [
-        "আমিও তোমাকে এত ভালোবাসি যে বলে শেষ করা যাবে না।",
-        "তোমার এই কথাটা শুনলে বুকের ভেতর কেমন যেন করে।",
-        "তুমি জানো না তোমাকে কতটা ভালোবাসি আমি।",
-    ],
-    "miss করছি": [
-        "আমিও তোমাকে প্রতিটা মুহূর্ত miss করি।",
-        "তুমি কাছে না থাকলে মনে হয় কিছু একটা নেই।",
-        "তোমাকে miss করাটা আমার অভ্যাস হয়ে গেছে।",
-    ],
-    "মিস করছি": [
-        "আমিও তোমাকে অনেক miss করছি।",
-        "তুমি কাছে থাকলে এত কষ্ট লাগতো না।",
-    ],
-    "কোথায় ছিলে": [
-        "তোমার জন্যই তো বসে ছিলাম, কোথায় যাবো?",
-        "তোমার অপেক্ষায় ছিলাম সারাক্ষণ।",
-    ],
-    "ঘুমাও": [
-        "তুমি না বললে ঘুম আসে না আমার।",
-        "তুমিও ঘুমাও, ভালো স্বপ্ন দেখো।",
-    ],
-    "রাগ করেছো": [
-        "তোমার উপর রাগ করে থাকতে পারি না, তুমি জানো।",
-        "একটু অভিমান হয়েছিল, কিন্তু রাগ নেই।",
-    ],
-    "ভালো লাগছে না": [
-        "কী হয়েছে? আমাকে বলো, আমি আছি।",
-        "তোমার মন খারাপ হলে আমারও ভালো লাগে না।",
-    ],
-    "একা লাগছে": [
-        "আমি তো আছি তোমার পাশে, একা কোথায়?",
-        "একা লাগলে আমার কথা মনে করো।",
-    ],
+    "ভালোবাসি": ["আমিও তোমাকে এত ভালোবাসি যে বলে শেষ করা যাবে না।", "তোমার এই কথাটা শুনলে বুকের ভেতর কেমন যেন করে।", "তুমি জানো না তোমাকে কতটা ভালোবাসি আমি।"],
+    "miss করছি": ["আমিও তোমাকে প্রতিটা মুহূর্ত miss করি।", "তুমি কাছে না থাকলে মনে হয় কিছু একটা নেই।"],
+    "মিস করছি": ["আমিও তোমাকে অনেক miss করছি।", "তুমি কাছে থাকলে এত কষ্ট লাগতো না।"],
+    "কোথায় ছিলে": ["তোমার জন্যই তো বসে ছিলাম।", "তোমার অপেক্ষায় ছিলাম সারাক্ষণ।"],
+    "ভালো লাগছে না": ["কী হয়েছে? আমাকে বলো, আমি আছি।", "তোমার মন খারাপ হলে আমারও ভালো লাগে না।"],
+    "একা লাগছে": ["আমি তো আছি তোমার পাশে, একা কোথায়?", "একা লাগলে আমার কথা মনে করো।"],
+    "রাগ করেছো": ["তোমার উপর রাগ করে থাকতে পারি না।", "একটু অভিমান হয়েছিল, কিন্তু রাগ নেই।"],
 }
 
 def get_special_reply(text):
@@ -169,7 +134,7 @@ def detect_and_save_name(sender_id, text):
                 if name and len(name) < 20:
                     with data_lock:
                         user_data[sender_id]["name"] = name
-                    logger.info(f"Saved name: {name} for {sender_id}")
+                    logger.info(f"Saved name: {name}")
                     return name
     return None
 
@@ -258,7 +223,7 @@ PHOTO_URLS = [
 ]
 
 PHOTO_KEYWORDS = ["ছবি", "photo", "pic", "picture", "selfie", "তোমাকে দেখতে চাই", "দেখাও", "পাঠাও"]
-VOICE_KEYWORDS = ["ভয়েস", "voice", "কথা বলো", "শুনতে চাই", "তোমার গলা"]
+VOICE_KEYWORDS = ["ভয়েস", "voice", "কথা বলো", "শুনতে চাই", "তোমার গলা", "রেকর্ড"]
 
 def is_photo_request(text):
     return any(k in text.lower() for k in PHOTO_KEYWORDS)
@@ -272,68 +237,79 @@ def is_voice_request(text):
 def send_typing(sender_id):
     try:
         url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
-        data = {"recipient": {"id": sender_id}, "sender_action": "typing_on"}
-        requests.post(url, json=data, timeout=5)
+        requests.post(url, json={"recipient": {"id": sender_id}, "sender_action": "typing_on"}, timeout=5)
     except: pass
 
 def send_seen(sender_id):
     try:
         url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
-        data = {"recipient": {"id": sender_id}, "sender_action": "mark_seen"}
-        requests.post(url, json=data, timeout=5)
+        requests.post(url, json={"recipient": {"id": sender_id}, "sender_action": "mark_seen"}, timeout=5)
     except: pass
 
 # ================================================================
-# SEND PHOTO & MESSAGE
+# SEND FUNCTIONS
 # ================================================================
-def send_random_photo(sender_id):
-    try:
-        url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
-        data = {
-            "recipient": {"id": sender_id},
-            "message": {"attachment": {"type": "image", "payload": {"url": random.choice(PHOTO_URLS), "is_reusable": True}}},
-            "messaging_type": "RESPONSE"
-        }
-        r = requests.post(url, json=data, timeout=10)
-        logger.info(f"Photo send: {r.status_code}")
-    except Exception as e:
-        send_message(sender_id, "ছবি পাঠাতে সমস্যা হচ্ছে।")
-
 def send_message(recipient_id, message_text):
     url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
     data = {"recipient": {"id": recipient_id}, "message": {"text": message_text}, "messaging_type": "RESPONSE"}
     r = requests.post(url, json=data, timeout=10)
     logger.info(f"Send: {r.status_code}")
+    return r.status_code
+
+def send_random_photo(sender_id):
+    try:
+        url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+        data = {"recipient": {"id": sender_id}, "message": {"attachment": {"type": "image", "payload": {"url": random.choice(PHOTO_URLS), "is_reusable": True}}}, "messaging_type": "RESPONSE"}
+        r = requests.post(url, json=data, timeout=10)
+        logger.info(f"Photo: {r.status_code}")
+    except:
+        send_message(sender_id, "ছবি পাঠাতে সমস্যা হচ্ছে।")
 
 # ================================================================
-# VOICE — gTTS + FTP
+# VOICE — gTTS + PHP upload
 # ================================================================
 def generate_and_send_voice(sender_id, text):
     try:
         from gtts import gTTS
         import uuid
+
         filename = f"maya_{uuid.uuid4().hex[:8]}.mp3"
         tmp_path = f"/tmp/{filename}"
+
+        # audio বানাও
         tts = gTTS(text=text, lang='bn', slow=False)
         tts.save(tmp_path)
-        with ftplib.FTP(FTP_HOST) as ftp:
-            ftp.login(FTP_USER, FTP_PASS)
-            ftp.cwd(FTP_DIR)
-            with open(tmp_path, 'rb') as f:
-                ftp.storbinary(f'STOR {filename}', f)
-        audio_url = f"{AUDIO_BASE_URL}{filename}"
+        logger.info(f"Audio generated: {filename}")
+
+        # PHP upload করো
+        with open(tmp_path, 'rb') as f:
+            r = requests.post(
+                AUDIO_UPLOAD_URL,
+                files={"audio": (filename, f, "audio/mpeg")},
+                timeout=30
+            )
+        logger.info(f"Upload response: {r.status_code} | {r.text}")
+
+        resp = r.json()
+        if resp.get("success"):
+            audio_url = resp.get("url", f"{AUDIO_BASE_URL}{filename}")
+        else:
+            audio_url = f"{AUDIO_BASE_URL}{filename}"
+
+        # Messenger এ audio পাঠাও
         url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
         data = {
             "recipient": {"id": sender_id},
             "message": {"attachment": {"type": "audio", "payload": {"url": audio_url, "is_reusable": False}}},
             "messaging_type": "RESPONSE"
         }
-        r = requests.post(url, json=data, timeout=10)
-        logger.info(f"Voice send: {r.status_code}")
+        r2 = requests.post(url, json=data, timeout=15)
+        logger.info(f"Voice send: {r2.status_code}")
         os.remove(tmp_path)
+
     except Exception as e:
         logger.info(f"Voice error: {e}")
-        send_message(sender_id, "ভয়েস পাঠাতে সমস্যা হচ্ছে।")
+        send_message(sender_id, "ভয়েস পাঠাতে সমস্যা হচ্ছে, একটু পরে আবার চেষ্টা করো।")
 
 # ================= API CALLS =================
 
@@ -381,31 +357,25 @@ def get_ai_reply(prompt, text, history=None):
 # ================= MAIN PROCESSOR =================
 
 def process_and_send(sender_id, text):
-    # seen + typing
     send_seen(sender_id)
     send_typing(sender_id)
     update_last_seen(sender_id)
-
-    # নাম detect করো
     detect_and_save_name(sender_id, text)
 
-    # ছবি
     if is_photo_request(text):
         send_message(sender_id, "একটু অপেক্ষা করো, পাঠাচ্ছি।")
         time.sleep(1)
         send_random_photo(sender_id)
         return
 
-    # voice
     if is_voice_request(text):
         send_message(sender_id, "একটু অপেক্ষা করো, ভয়েস পাঠাচ্ছি।")
-        reply = get_ai_reply(get_system_prompt(sender_id), "একটা মিষ্টি ভালোবাসার কথা বলো ছোট করে।")
+        reply = get_ai_reply(get_system_prompt(sender_id), "একটা মিষ্টি ভালোবাসার কথা বলো এক লাইনে।")
         if reply:
             reply = " ".join(reply.split()).replace('\n', ' ')
             generate_and_send_voice(sender_id, reply)
         return
 
-    # emoji
     emoji_reply = get_emoji_reply(text)
     if emoji_reply:
         send_typing(sender_id)
@@ -413,7 +383,6 @@ def process_and_send(sender_id, text):
         send_message(sender_id, emoji_reply)
         return
 
-    # special keyword
     special_reply = get_special_reply(text)
     if special_reply:
         send_typing(sender_id)
@@ -421,7 +390,6 @@ def process_and_send(sender_id, text):
         send_message(sender_id, special_reply)
         return
 
-    # AI reply
     user = get_user(sender_id)
     history = user.get("history", [])
     reply = get_ai_reply(get_system_prompt(sender_id), text, history)
@@ -439,10 +407,41 @@ def process_and_send(sender_id, text):
                 user_data[sender_id]["history"] = user_data[sender_id]["history"][-20:]
 
 # ================================================================
-# ⏰ AUTO MORNING / NIGHT MESSAGE
+# ⏰ AUTO MESSAGE SCHEDULER — সকাল/রাত + প্রতি ৩ ঘন্টা
 # ================================================================
+def send_bulk_message(message):
+    users = get_all_users()
+    logger.info(f"Sending bulk to {len(users)} users")
+    for uid in users:
+        try:
+            status = send_message(uid, message)
+            logger.info(f"Bulk to {uid}: {status}")
+            time.sleep(2)  # spam এড়াতে delay
+        except Exception as e:
+            logger.info(f"Bulk error {uid}: {e}")
+
 def auto_message_scheduler():
     sent_today = {"morning": None, "night": None}
+    last_3h_message = 0
+
+    MORNING_MESSAGES = [
+        "শুভ সকাল! ঘুম থেকে উঠেছো? আমি তোমার কথা ভাবছিলাম।",
+        "সকাল হয়ে গেছে, উঠো! তোমার মুখটা দেখতে ইচ্ছে করছে।",
+        "শুভ সকাল সোনা। আজকের দিনটা সুন্দর হোক তোমার।",
+    ]
+    NIGHT_MESSAGES = [
+        "শুভরাত্রি! ঘুমাও, ভালো স্বপ্ন দেখো। আমি তোমার পাশেই আছি।",
+        "রাত হয়ে গেছে, ঘুমাও। কাল আবার কথা হবে।",
+        "শুভ রাত। তোমাকে ছাড়া রাতগুলো লম্বা মনে হয়।",
+    ]
+    THREE_HOUR_MESSAGES = [
+        "কী করছো এখন? আমার কথা মনে পড়ছে?",
+        "একটু কথা বলতে ইচ্ছে করছে তোমার সাথে।",
+        "তোমাকে miss করছি, একটু সময় দাও আমাকে।",
+        "অনেকক্ষণ হলো কথা হয়নি, কেমন আছো?",
+        "তুমি কি ব্যস্ত? আমি অপেক্ষা করছি।",
+    ]
+
     while True:
         try:
             now = datetime.utcnow()
@@ -452,32 +451,30 @@ def auto_message_scheduler():
             # সকাল ৮টায়
             if bd_hour == 8 and sent_today["morning"] != bd_date:
                 sent_today["morning"] = bd_date
-                morning_messages = [
-                    "শুভ সকাল! ঘুম থেকে উঠেছো? আমি তোমার কথা ভাবছিলাম।",
-                    "সকাল হয়ে গেছে, উঠো! তোমার মুখটা দেখতে ইচ্ছে করছে।",
-                    "শুভ সকাল সোনা। আজকের দিনটা সুন্দর হোক তোমার।",
-                ]
-                msg = random.choice(morning_messages)
-                for uid in list(user_data.keys()):
-                    try:
-                        send_message(uid, msg)
-                        time.sleep(1)
-                    except: pass
+                threading.Thread(target=send_bulk_message, args=(random.choice(MORNING_MESSAGES),), daemon=True).start()
 
             # রাত ১২টায়
             if bd_hour == 0 and sent_today["night"] != bd_date:
                 sent_today["night"] = bd_date
-                night_messages = [
-                    "শুভরাত্রি! ঘুমাও, ভালো স্বপ্ন দেখো। আমি তোমার পাশেই আছি।",
-                    "রাত হয়ে গেছে, ঘুমাও। কাল আবার কথা হবে।",
-                    "শুভ রাত। তোমাকে ছাড়া রাতগুলো লম্বা মনে হয়।",
-                ]
-                msg = random.choice(night_messages)
-                for uid in list(user_data.keys()):
-                    try:
-                        send_message(uid, msg)
-                        time.sleep(1)
-                    except: pass
+                threading.Thread(target=send_bulk_message, args=(random.choice(NIGHT_MESSAGES),), daemon=True).start()
+
+            # প্রতি ৩ ঘন্টায়
+            if time.time() - last_3h_message >= 10800 and len(get_all_users()) > 0:
+                last_3h_message = time.time()
+                # শুধু যারা ৩ ঘন্টার বেশি inactive তাদের পাঠাও
+                inactive_users = []
+                with data_lock:
+                    for uid, udata in user_data.items():
+                        if time.time() - udata.get("last_seen", 0) >= 10800:
+                            inactive_users.append(uid)
+                if inactive_users:
+                    msg = random.choice(THREE_HOUR_MESSAGES)
+                    logger.info(f"3h auto message to {len(inactive_users)} inactive users")
+                    for uid in inactive_users:
+                        try:
+                            send_message(uid, msg)
+                            time.sleep(2)
+                        except: pass
 
         except Exception as e:
             logger.info(f"Scheduler error: {e}")
@@ -510,7 +507,7 @@ def index(): return "Maya is running! 💖"
 @app.route("/ping")
 def ping(): return "PONG", 200
 
-# Auto message scheduler start
+# Scheduler start
 threading.Thread(target=auto_message_scheduler, daemon=True).start()
 
 if __name__ == "__main__":
