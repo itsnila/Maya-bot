@@ -89,10 +89,31 @@ def init_db():
     finally:
         conn.close()
 
+def fetch_fb_name(sender_id):
+    """Facebook থেকে user এর নাম নিয়ে আসো"""
+    try:
+        url = f"https://graph.facebook.com/v18.0/{sender_id}?fields=name,first_name&access_token={PAGE_ACCESS_TOKEN}"
+        r = requests.get(url, timeout=5)
+        data = r.json()
+        if 'first_name' in data:
+            return data['first_name']
+        elif 'name' in data:
+            return data['name'].split()[0]
+    except Exception as e:
+        logger.error(f"FB name fetch error: {e}")
+    return None
+
 def db_save_user(sender_id, name=None):
     conn = get_db()
     if not conn: return
     try:
+        # নাম না থাকলে Facebook থেকে নিয়ে আসো
+        if not name:
+            existing = db_get_user_name(sender_id)
+            if not existing:
+                name = fetch_fb_name(sender_id)
+                logger.info(f"FB name fetched: {name} for {sender_id}")
+
         with conn.cursor() as c:
             c.execute("""INSERT INTO users (id, name, last_seen, message_count)
                 VALUES (%s, %s, NOW(), 1)
