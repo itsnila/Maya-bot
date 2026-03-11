@@ -667,6 +667,24 @@ def api_send():
         status = send_message(user_id, message)
         return jsonify({"success": status == 200})
 
+@app.route("/api/delete_user", methods=["POST"])
+def api_delete_user():
+    if not check_admin(request): return jsonify({"error": "unauthorized"}), 401
+    user_id = request.json.get("user_id")
+    if not user_id: return jsonify({"error": "missing user_id"}), 400
+    conn = get_db()
+    if not conn: return jsonify({"error": "db error"}), 500
+    try:
+        with conn.cursor() as c:
+            c.execute("DELETE FROM messages WHERE user_id=%s", (user_id,))
+            c.execute("DELETE FROM users WHERE id=%s", (user_id,))
+        conn.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
 @app.route("/api/setting", methods=["GET", "POST"])
 def api_setting():
     if not check_admin(request): return jsonify({"error": "unauthorized"}), 401
