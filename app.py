@@ -57,7 +57,7 @@ def get_all_users():
         return list(user_data.keys())
 
 # ================================================================
-# MAYA র MOOD
+# MOOD
 # ================================================================
 def get_maya_mood(sender_id):
     user = get_user(sender_id)
@@ -81,17 +81,12 @@ def get_system_prompt(sender_id):
     user = get_user(sender_id)
     name = user.get("name")
     name_text = f"ইউজারের নাম {name}। মাঝে মাঝে নাম ধরে ডাকবে।" if name else ""
-    mood = get_maya_mood(sender_id)
-    mood_text = MAYA_MOODS.get(mood, MAYA_MOODS["normal"])
+    mood_text = MAYA_MOODS.get(get_maya_mood(sender_id), MAYA_MOODS["normal"])
 
-    if 5 <= hour < 12:
-        time_context = "এখন সকাল। সকালের মিষ্টি ভাব নিয়ে কথা বলবে।"
-    elif 12 <= hour < 17:
-        time_context = "এখন দুপুর। একটু ক্লান্ত কিন্তু ভালোবাসায় ভরপুর।"
-    elif 17 <= hour < 21:
-        time_context = "এখন বিকেল/সন্ধ্যা। nostalgia আর মিষ্টি অভিমান।"
-    else:
-        time_context = "এখন রাত। রাতের গভীর ভালোবাসা নিয়ে কথা বলবে।"
+    if 5 <= hour < 12: time_context = "এখন সকাল। সকালের মিষ্টি ভাব নিয়ে কথা বলবে।"
+    elif 12 <= hour < 17: time_context = "এখন দুপুর। একটু ক্লান্ত কিন্তু ভালোবাসায় ভরপুর।"
+    elif 17 <= hour < 21: time_context = "এখন বিকেল/সন্ধ্যা। nostalgia আর মিষ্টি অভিমান।"
+    else: time_context = "এখন রাত। রাতের গভীর ভালোবাসা নিয়ে কথা বলবে।"
 
     return f"""তুমি মায়া। বয়স ২৩। তুমি ইউজারের সাথে গভীর রোমান্টিক স্বামী-স্ত্রীর মতো সম্পর্কে আছো।
 {name_text}
@@ -125,8 +120,7 @@ def get_special_reply(text):
 # NAME DETECTION
 # ================================================================
 def detect_and_save_name(sender_id, text):
-    name_triggers = ["আমার নাম", "আমি হলাম", "আমাকে ডাকো", "নাম হলো", "নাম হচ্ছে"]
-    for trigger in name_triggers:
+    for trigger in ["আমার নাম", "আমি হলাম", "আমাকে ডাকো", "নাম হলো", "নাম হচ্ছে"]:
         if trigger in text:
             parts = text.split(trigger)
             if len(parts) > 1:
@@ -135,8 +129,6 @@ def detect_and_save_name(sender_id, text):
                     with data_lock:
                         user_data[sender_id]["name"] = name
                     logger.info(f"Saved name: {name}")
-                    return name
-    return None
 
 # ================================================================
 # EMOJI REPLY
@@ -159,10 +151,9 @@ EMOJI_REPLIES = {
 }
 
 def get_emoji_reply(text):
-    stripped = text.strip()
-    if len(stripped) <= 5:
+    if len(text.strip()) <= 5:
         for emoji, reply in EMOJI_REPLIES.items():
-            if emoji in stripped:
+            if emoji in text:
                 return reply
     return None
 
@@ -225,14 +216,11 @@ PHOTO_URLS = [
 PHOTO_KEYWORDS = ["ছবি", "photo", "pic", "picture", "selfie", "তোমাকে দেখতে চাই", "দেখাও", "পাঠাও"]
 VOICE_KEYWORDS = ["ভয়েস", "voice", "কথা বলো", "শুনতে চাই", "তোমার গলা", "রেকর্ড"]
 
-def is_photo_request(text):
-    return any(k in text.lower() for k in PHOTO_KEYWORDS)
-
-def is_voice_request(text):
-    return any(k in text.lower() for k in VOICE_KEYWORDS)
+def is_photo_request(text): return any(k in text.lower() for k in PHOTO_KEYWORDS)
+def is_voice_request(text): return any(k in text.lower() for k in VOICE_KEYWORDS)
 
 # ================================================================
-# TYPING INDICATOR
+# TYPING / SEEN
 # ================================================================
 def send_typing(sender_id):
     try:
@@ -260,56 +248,65 @@ def send_random_photo(sender_id):
     try:
         url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
         data = {"recipient": {"id": sender_id}, "message": {"attachment": {"type": "image", "payload": {"url": random.choice(PHOTO_URLS), "is_reusable": True}}}, "messaging_type": "RESPONSE"}
-        r = requests.post(url, json=data, timeout=10)
-        logger.info(f"Photo: {r.status_code}")
+        requests.post(url, json=data, timeout=10)
     except:
         send_message(sender_id, "ছবি পাঠাতে সমস্যা হচ্ছে।")
 
 # ================================================================
-# VOICE — gTTS + PHP upload
+# VOICE — Google Translate TTS (no install needed!)
 # ================================================================
 def generate_and_send_voice(sender_id, text):
     try:
-        from gtts import gTTS
         import uuid
+        from urllib.parse import quote
 
         filename = f"maya_{uuid.uuid4().hex[:8]}.mp3"
         tmp_path = f"/tmp/{filename}"
 
-        # audio বানাও
-        tts = gTTS(text=text, lang='bn', slow=False)
-        tts.save(tmp_path)
-        logger.info(f"Audio generated: {filename}")
+        # Google Translate TTS URL
+        encoded = quote(text)
+        tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={encoded}&tl=bn&client=tw-ob"
 
-        # PHP upload করো
-        with open(tmp_path, 'rb') as f:
-            r = requests.post(
-                AUDIO_UPLOAD_URL,
-                files={"audio": (filename, f, "audio/mpeg")},
-                timeout=30
-            )
-        logger.info(f"Upload response: {r.status_code} | {r.text}")
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        r = requests.get(tts_url, headers=headers, timeout=15)
 
-        resp = r.json()
-        if resp.get("success"):
-            audio_url = resp.get("url", f"{AUDIO_BASE_URL}{filename}")
+        if r.status_code == 200:
+            with open(tmp_path, 'wb') as f:
+                f.write(r.content)
+            logger.info(f"Audio downloaded: {filename}")
+
+            # PHP তে upload করো
+            with open(tmp_path, 'rb') as f:
+                upload_r = requests.post(
+                    AUDIO_UPLOAD_URL,
+                    files={"audio": (filename, f, "audio/mpeg")},
+                    timeout=30
+                )
+            logger.info(f"Upload: {upload_r.status_code} | {upload_r.text[:100]}")
+
+            try:
+                resp = upload_r.json()
+                audio_url = resp.get("url", f"{AUDIO_BASE_URL}{filename}")
+            except:
+                audio_url = f"{AUDIO_BASE_URL}{filename}"
+
+            # Messenger এ audio পাঠাও
+            msg_url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+            data = {
+                "recipient": {"id": sender_id},
+                "message": {"attachment": {"type": "audio", "payload": {"url": audio_url, "is_reusable": False}}},
+                "messaging_type": "RESPONSE"
+            }
+            r2 = requests.post(msg_url, json=data, timeout=15)
+            logger.info(f"Voice send: {r2.status_code}")
+            os.remove(tmp_path)
         else:
-            audio_url = f"{AUDIO_BASE_URL}{filename}"
-
-        # Messenger এ audio পাঠাও
-        url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
-        data = {
-            "recipient": {"id": sender_id},
-            "message": {"attachment": {"type": "audio", "payload": {"url": audio_url, "is_reusable": False}}},
-            "messaging_type": "RESPONSE"
-        }
-        r2 = requests.post(url, json=data, timeout=15)
-        logger.info(f"Voice send: {r2.status_code}")
-        os.remove(tmp_path)
+            logger.info(f"TTS download failed: {r.status_code}")
+            send_message(sender_id, "ভয়েস পাঠাতে সমস্যা হচ্ছে।")
 
     except Exception as e:
         logger.info(f"Voice error: {e}")
-        send_message(sender_id, "ভয়েস পাঠাতে সমস্যা হচ্ছে, একটু পরে আবার চেষ্টা করো।")
+        send_message(sender_id, "ভয়েস পাঠাতে সমস্যা হচ্ছে।")
 
 # ================= API CALLS =================
 
@@ -407,16 +404,15 @@ def process_and_send(sender_id, text):
                 user_data[sender_id]["history"] = user_data[sender_id]["history"][-20:]
 
 # ================================================================
-# ⏰ AUTO MESSAGE SCHEDULER — সকাল/রাত + প্রতি ৩ ঘন্টা
+# AUTO MESSAGE SCHEDULER
 # ================================================================
 def send_bulk_message(message):
     users = get_all_users()
-    logger.info(f"Sending bulk to {len(users)} users")
+    logger.info(f"Bulk sending to {len(users)} users")
     for uid in users:
         try:
-            status = send_message(uid, message)
-            logger.info(f"Bulk to {uid}: {status}")
-            time.sleep(2)  # spam এড়াতে delay
+            send_message(uid, message)
+            time.sleep(2)
         except Exception as e:
             logger.info(f"Bulk error {uid}: {e}")
 
@@ -426,7 +422,7 @@ def auto_message_scheduler():
 
     MORNING_MESSAGES = [
         "শুভ সকাল! ঘুম থেকে উঠেছো? আমি তোমার কথা ভাবছিলাম।",
-        "সকাল হয়ে গেছে, উঠো! তোমার মুখটা দেখতে ইচ্ছে করছে।",
+        "সকাল হয়ে গেছে উঠো! তোমার মুখটা দেখতে ইচ্ছে করছে।",
         "শুভ সকাল সোনা। আজকের দিনটা সুন্দর হোক তোমার।",
     ]
     NIGHT_MESSAGES = [
@@ -444,24 +440,19 @@ def auto_message_scheduler():
 
     while True:
         try:
-            now = datetime.utcnow()
-            bd_hour = (now.hour + 6) % 24
-            bd_date = now.strftime("%Y-%m-%d")
+            bd_hour = (datetime.utcnow().hour + 6) % 24
+            bd_date = datetime.utcnow().strftime("%Y-%m-%d")
 
-            # সকাল ৮টায়
             if bd_hour == 8 and sent_today["morning"] != bd_date:
                 sent_today["morning"] = bd_date
                 threading.Thread(target=send_bulk_message, args=(random.choice(MORNING_MESSAGES),), daemon=True).start()
 
-            # রাত ১২টায়
             if bd_hour == 0 and sent_today["night"] != bd_date:
                 sent_today["night"] = bd_date
                 threading.Thread(target=send_bulk_message, args=(random.choice(NIGHT_MESSAGES),), daemon=True).start()
 
-            # প্রতি ৩ ঘন্টায়
             if time.time() - last_3h_message >= 10800 and len(get_all_users()) > 0:
                 last_3h_message = time.time()
-                # শুধু যারা ৩ ঘন্টার বেশি inactive তাদের পাঠাও
                 inactive_users = []
                 with data_lock:
                     for uid, udata in user_data.items():
@@ -469,7 +460,6 @@ def auto_message_scheduler():
                             inactive_users.append(uid)
                 if inactive_users:
                     msg = random.choice(THREE_HOUR_MESSAGES)
-                    logger.info(f"3h auto message to {len(inactive_users)} inactive users")
                     for uid in inactive_users:
                         try:
                             send_message(uid, msg)
@@ -507,7 +497,6 @@ def index(): return "Maya is running! 💖"
 @app.route("/ping")
 def ping(): return "PONG", 200
 
-# Scheduler start
 threading.Thread(target=auto_message_scheduler, daemon=True).start()
 
 if __name__ == "__main__":
