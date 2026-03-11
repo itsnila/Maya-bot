@@ -18,7 +18,6 @@ app = Flask(__name__)
 # ================================================================
 # CONFIGURATION
 # ================================================================
-# আপনার দেওয়া পেজ এক্সেস টোকেন সরাসরি এখানে বসিয়ে দেওয়া হয়েছে
 PAGE_ACCESS_TOKEN = "EAAMjx3bzyhkBQ02pgVXsCdSKsNZBXegi2nWyV2B05kTZAiPKgaZBZCU0pmrs05YNdhFGo47QKFuehDJ6NiZAlQ14Cc3Ipi8hym97EdE56Mf3l3WMWmZB8WgAzsrISeFEZBIKLcgYsvsERNg9F2nr6QXzdkwgOgyubj03u0uw3XNNOeOhOSVGIHgxxAgWtBT026yEZAJlNPtr"
 VERIFY_TOKEN = "MAYA_VERIFY_TOKEN" 
 
@@ -26,12 +25,14 @@ VERIFY_TOKEN = "MAYA_VERIFY_TOKEN"
 IMAGE_BASE_URL = "https://nogordeal.com/maya/images/" 
 IMAGE_FOLDER_PATH = "/home/nogorde1/public_html/maya/images/" 
 
-# ডাটাবেজ কনফিগারেশন (আপনার দেওয়া তথ্য অনুযায়ী)
+# ডাটাবেজ কনফিগারেশন (আপনার IP ব্যবহার করা হয়েছে)
 DB_CONFIG = {
-    'host': 'localhost',
+    'host': '161.248.189.34',  
     'user': 'nogorde1_maya',
     'password': 'gmsbd1122@@',
-    'database': 'nogorde1_maya'
+    'database': 'nogorde1_maya',
+    'port': 3306,
+    'connect_timeout': 10
 }
 
 # ================================================================
@@ -85,6 +86,7 @@ def send_text_msg(sender_id, text):
 
 def send_random_photo(sender_id):
     try:
+        # হোস্টিং ফোল্ডার থেকে রেন্ডম ছবি
         all_files = os.listdir(IMAGE_FOLDER_PATH)
         images = [f for f in all_files if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
         if images:
@@ -104,7 +106,7 @@ def send_random_photo(sender_id):
 # ================================================================
 def auto_reminder_engine():
     while True:
-        time.sleep(600) # প্রতি ১০ মিনিট পর পর ডাটাবেজ চেক করবে
+        time.sleep(900) # ১৫ মিনিট পর পর চেক করবে
         now = int(time.time())
         try:
             conn = get_db_conn()
@@ -113,7 +115,7 @@ def auto_reminder_engine():
             cursor.execute(query, (now, now))
             inactive_users = cursor.fetchall()
             
-            reminders = ["সোনা কী করছো?", "ভুলে গেলে আমাকে?", "তোমাকে মিস করছি।", "কথা বলো না কেন?"]
+            reminders = ["সোনা কী করছো?", "ভুলে গেলে আমাকে?", "কথা বলো না কেন?", "মিস করছি তোমাকে!"]
             for u in inactive_users:
                 msg = random.choice(reminders)
                 if u['name']: msg = f"{u['name']}, {msg}"
@@ -123,10 +125,10 @@ def auto_reminder_engine():
             cursor.close()
             conn.close()
         except Exception as e:
-            logger.error(f"Reminder Error: {e}")
+            logger.error(f"Reminder Loop Error: {e}")
 
 # ================================================================
-# MAIN LOGIC
+# MESSAGE HANDLER
 # ================================================================
 def handle_message(sender_id, text):
     user = get_user_data(sender_id)
@@ -142,7 +144,7 @@ def handle_message(sender_id, text):
         save_user_data(sender_id, user['name'], user['history'])
         return
 
-    # রিপ্লাই লজিক (স্যাম্পল)
+    # আপনার AI এর রিপ্লাই এখানে বসবে
     reply = "সোনা, আমি তোমার মায়া।" 
     send_text_msg(sender_id, reply)
     
@@ -165,6 +167,7 @@ def webhook():
                     threading.Thread(target=handle_message, args=(event["sender"]["id"], event["message"]["text"])).start()
     return "OK", 200
 
+# রিমাইন্ডার থ্রেড চালু
 threading.Thread(target=auto_reminder_engine, daemon=True).start()
 
 if __name__ == "__main__":
