@@ -14,8 +14,13 @@ app = Flask(__name__)
 
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
+ELEVENLABS_KEY = os.environ.get("ELEVENLABS_KEY")
 AUDIO_UPLOAD_URL = "https://nogordeal.com/audio/upload.php"
 AUDIO_BASE_URL = "https://nogordeal.com/audio/"
+
+# ElevenLabs — বাংলার জন্য ভালো voice ID
+# "Aria" multilingual voice — বাংলা support করে
+ELEVENLABS_VOICE_ID = "9BWtsMINqrJLrRacOk9x"
 
 def load_keys(prefix):
     keys = []
@@ -253,27 +258,39 @@ def send_random_photo(sender_id):
         send_message(sender_id, "ছবি পাঠাতে সমস্যা হচ্ছে।")
 
 # ================================================================
-# VOICE — Google Translate TTS (no install needed!)
+# VOICE — ElevenLabs + PHP upload
 # ================================================================
 def generate_and_send_voice(sender_id, text):
     try:
         import uuid
-        from urllib.parse import quote
-
         filename = f"maya_{uuid.uuid4().hex[:8]}.mp3"
         tmp_path = f"/tmp/{filename}"
 
-        # Google Translate TTS URL
-        encoded = quote(text)
-        tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={encoded}&tl=bn&client=tw-ob"
+        # ElevenLabs API call
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
+        headers = {
+            "xi-api-key": ELEVENLABS_KEY,
+            "Content-Type": "application/json",
+            "Accept": "audio/mpeg"
+        }
+        payload = {
+            "text": text,
+            "model_id": "eleven_multilingual_v2",
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.75,
+                "style": 0.3,
+                "use_speaker_boost": True
+            }
+        }
 
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        r = requests.get(tts_url, headers=headers, timeout=15)
+        r = requests.post(url, headers=headers, json=payload, timeout=30)
+        logger.info(f"ElevenLabs status: {r.status_code}")
 
         if r.status_code == 200:
             with open(tmp_path, 'wb') as f:
                 f.write(r.content)
-            logger.info(f"Audio downloaded: {filename}")
+            logger.info(f"Audio saved: {filename}")
 
             # PHP তে upload করো
             with open(tmp_path, 'rb') as f:
@@ -298,10 +315,11 @@ def generate_and_send_voice(sender_id, text):
                 "messaging_type": "RESPONSE"
             }
             r2 = requests.post(msg_url, json=data, timeout=15)
-            logger.info(f"Voice send: {r2.status_code}")
+            logger.info(f"Voice send: {r2.status_code} | {r2.text[:100]}")
             os.remove(tmp_path)
+
         else:
-            logger.info(f"TTS download failed: {r.status_code}")
+            logger.info(f"ElevenLabs error: {r.text[:200]}")
             send_message(sender_id, "ভয়েস পাঠাতে সমস্যা হচ্ছে।")
 
     except Exception as e:
