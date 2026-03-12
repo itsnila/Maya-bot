@@ -4,6 +4,7 @@ import random
 import threading
 import requests
 import logging
+import pymysql
 from datetime import datetime
 from flask import Flask, request, jsonify
 
@@ -20,9 +21,11 @@ AUDIO_BASE_URL = "https://nogordeal.com/audio/"
 ELEVENLABS_VOICE_ID = "9BWtsMINqrJLrRacOk9x"
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "gmsbd1122@@")
 
-# PHP Bridge
-BRIDGE_URL = "https://nogordeal.com/maya-admin/db.php"
-BRIDGE_KEY = "maya_bridge_gmsbd1122"
+DB_HOST = os.environ.get("DB_HOST")
+DB_NAME = os.environ.get("DB_NAME")
+DB_USER = os.environ.get("DB_USER")
+DB_PASS = os.environ.get("DB_PASS")
+DB_PORT = int(os.environ.get("DB_PORT", 3306))
 
 def load_keys(prefix):
     keys = []
@@ -39,96 +42,204 @@ indices = {"gemini": 0, "groq": 0, "openrouter": 0}
 index_lock = threading.Lock()
 
 # ================================================================
-# PHP BRIDGE FUNCTIONS
+# DATABASE — Clever Cloud MySQL
 # ================================================================
-def bridge(action, data=None):
-    """PHP Bridge এ request পাঠাও"""
+def get_db():
     try:
-        payload = {"action": action, **(data or {})}
-        r = requests.post(
-            BRIDGE_URL,
-            data=payload,
-            headers={"X-Bridge-Key": BRIDGE_KEY},
-            timeout=8
+        conn = pymysql.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            user=DB_USER,
+            password=DB_PASS,
+            database=DB_NAME,
+            charset='utf8mb4',
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=10
         )
-        return r.json()
+        return conn
     except Exception as e:
-        logger.error(f"Bridge error [{action}]: {e}")
+        logger.error(f"DB connect error: {e}")
         return None
 
 def init_db():
-    res = bridge("init")
-    if res and res.get("success"):
-        logger.info("DB initialized via PHP Bridge!")
-    else:
-        logger.error(f"DB init failed: {res}")
+    conn = get_db()
+    if not conn:
+        logger.error("DB init failed — no connection!")
+        return
+    try:
+        with conn.cursor() as c:
+            c.execute("""CREATE TABLE IF NOT EXISTS users (
+                id VARCHAR(50) PRIMARY KEY,
+                name VARCHAR(100),
+                first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+                message_count INT DEFAULT 0
+            ) CHARACTER SET utf8mb4""")
+            c.execute("""CREATE TABLE IF NOT EXISTS messages (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id VARCHAR(50),
+                direction ENUM('in','out'),
+                message TEXT,
+                msg_type VARCHAR(20) DEFAULT 'text',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_user(user_id),
+                INDEX idx_time(created_at)
+            ) CHARACTER SET utf8mb4""")
+            c.execute("""CREATE TABLE IF NOT EXISTS bot_settings (
+                key_name VARCHAR(100) PRIMARY KEY,
+                value TEXT
+            ) CHARACTER SET utf8mb4""")
+        conn.commit()
+        logger.info("✅ DB initialized via Clever Cloud!")
+    except Exception as e:
+        logger.error(f"DB init error: {e}")
+    finally:
+        conn.close()
 
 def db_save_user(sender_id, name=None):
-    bridge("save_user", {"id": sender_id, "name": name or ""})
+    conn = get_db()
+    if not conn: return
+    try:
+        with conn.cursor() as c:
+            c.execute("""INSERT INTO users (id, name, last_seen, message_count)
+                VALUES (%s, %s, NOW(), 1)
+                ON DUPLICATE KEY UPDATE
+                last_seen=NOW(),
+                message_count=message_count+1,
+                name=IF(%s IS NOT NULL AND %s != '', %s, name)
+            """, (sender_id, name, name, name, name))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"DB save user: {e}")
+    finally:
+        conn.close()
 
-def db_save_message(user_id, direction, message, msg_type="text"):
-    bridge("save_message", {
-        "user_id": user_id,
-        "direction": direction,
-        "message": message[:1000],
-        "msg_type": msg_type
-    })
+def db_save_message(user_id, direction, message, msg_type='text'):
+    conn = get_db()
+    if not conn: return
+    try:
+        with conn.cursor() as c:
+            c.execute("INSERT INTO messages (user_id,direction,message,msg_type) VALUES (%s,%s,%s,%s)",
+                      (user_id, direction, message[:1000], msg_type))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"DB save msg: {e}")
+    finally:
+        conn.close()
 
 def db_get_history(user_id, limit=10):
-    res = bridge("get_history", {"user_id": user_id, "limit": limit})
-    if not res or not isinstance(res, list):
+    conn = get_db()
+    if not conn: return []
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT direction, message FROM messages WHERE user_id=%s ORDER BY created_at DESC LIMIT %s",
+                      (user_id, limit*2))
+            rows = list(reversed(c.fetchall()))
+        history = []
+        for row in rows:
+            role = "user" if row['direction'] == 'in' else "model"
+            history.append({"role": role, "parts": [{"text": row['message']}]})
+        return history
+    except Exception as e:
+        logger.error(f"DB get history: {e}")
         return []
-    history = []
-    for row in res:
-        role = "user" if row.get("direction") == "in" else "model"
-        history.append({"role": role, "parts": [{"text": row.get("message", "")}]})
-    return history
+    finally:
+        conn.close()
 
 def db_get_user_name(sender_id):
-    res = bridge("get_name", {"user_id": sender_id})
-    if res:
-        return res.get("name")
-    return None
-
-def db_get_setting(key, default=None):
-    res = bridge("get_setting", {"key": key})
-    if res:
-        return res.get("value") or default
-    return default
-
-def db_set_setting(key, value):
-    bridge("set_setting", {"key": key, "value": value})
-
-def get_all_user_ids():
-    res = bridge("get_users")
-    if res and isinstance(res, list):
-        return [u["id"] for u in res]
-    return []
-
-def get_inactive_user_ids(hours=3):
-    res = bridge("get_inactive", {"hours": hours})
-    if res and isinstance(res, list):
-        return res
-    return []
+    conn = get_db()
+    if not conn: return None
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT name FROM users WHERE id=%s", (sender_id,))
+            row = c.fetchone()
+        return row['name'] if row else None
+    except: return None
+    finally: conn.close()
 
 def is_new_user(sender_id):
-    res = bridge("get_name", {"user_id": sender_id})
-    # যদি user DB তে না থাকে তাহলে নতুন
-    if res is None:
-        return True
-    return False
+    conn = get_db()
+    if not conn: return False
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT id FROM users WHERE id=%s", (sender_id,))
+            return c.fetchone() is None
+    except: return False
+    finally: conn.close()
+
+def db_get_setting(key, default=None):
+    conn = get_db()
+    if not conn: return default
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT value FROM bot_settings WHERE key_name=%s", (key,))
+            row = c.fetchone()
+        return row['value'] if row else default
+    except: return default
+    finally: conn.close()
+
+def db_set_setting(key, value):
+    conn = get_db()
+    if not conn: return
+    try:
+        with conn.cursor() as c:
+            c.execute("INSERT INTO bot_settings (key_name,value) VALUES (%s,%s) ON DUPLICATE KEY UPDATE value=%s",
+                      (key, value, value))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"DB set setting: {e}")
+    finally:
+        conn.close()
+
+def get_all_user_ids():
+    conn = get_db()
+    if not conn: return []
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT id FROM users")
+            return [r['id'] for r in c.fetchall()]
+    except: return []
+    finally: conn.close()
+
+def get_inactive_user_ids(hours=3):
+    conn = get_db()
+    if not conn: return []
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT id FROM users WHERE TIMESTAMPDIFF(HOUR, last_seen, NOW()) >= %s", (hours,))
+            return [r['id'] for r in c.fetchall()]
+    except: return []
+    finally: conn.close()
 
 def delete_user_db(user_id):
-    return bridge("delete_user", {"user_id": user_id})
+    conn = get_db()
+    if not conn: return False
+    try:
+        with conn.cursor() as c:
+            c.execute("DELETE FROM messages WHERE user_id=%s", (user_id,))
+            c.execute("DELETE FROM users WHERE id=%s", (user_id,))
+        conn.commit()
+        return True
+    except: return False
+    finally: conn.close()
 
 # ================================================================
 # MOOD
 # ================================================================
 def get_maya_mood(sender_id):
-    res = bridge("get_mood", {"user_id": sender_id})
-    if res:
-        return res.get("mood", "normal")
-    return "normal"
+    conn = get_db()
+    hours_gone = 0
+    if conn:
+        try:
+            with conn.cursor() as c:
+                c.execute("SELECT TIMESTAMPDIFF(HOUR, last_seen, NOW()) as h FROM users WHERE id=%s", (sender_id,))
+                row = c.fetchone()
+                if row: hours_gone = row['h'] or 0
+        except: pass
+        finally: conn.close()
+    if hours_gone > 12: return "angry"
+    elif hours_gone > 6: return "sad"
+    else: return random.choice(["happy", "happy", "normal", "normal"])
 
 MAYA_MOODS = {
     "happy": "তুমি এখন খুব খুশি এবং প্রেমময়। উত্তরে বেশি আদর ও মিষ্টি ভাব থাকবে।",
@@ -145,16 +256,13 @@ def get_system_prompt(sender_id):
     name = db_get_user_name(sender_id)
     name_text = f"ইউজারের নাম {name}। মাঝে মাঝে নাম ধরে ডাকবে।" if name else ""
     mood_text = MAYA_MOODS.get(get_maya_mood(sender_id), MAYA_MOODS["normal"])
-
     custom = db_get_setting("system_prompt")
     if custom:
         return custom.replace("{name}", name or "").replace("{mood}", mood_text)
-
     if 5 <= hour < 12: time_context = "এখন সকাল। সকালের মিষ্টি ভাব নিয়ে কথা বলবে।"
     elif 12 <= hour < 17: time_context = "এখন দুপুর। একটু ক্লান্ত কিন্তু ভালোবাসায় ভরপুর।"
     elif 17 <= hour < 21: time_context = "এখন বিকেল/সন্ধ্যা। nostalgia আর মিষ্টি অভিমান।"
     else: time_context = "এখন রাত। রাতের গভীর ভালোবাসা নিয়ে কথা বলবে।"
-
     return f"""তুমি মায়া। বয়স ২৩। তুমি ইউজারের সাথে গভীর রোমান্টিক স্বামী-স্ত্রীর মতো সম্পর্কে আছো।
 {name_text}
 {time_context}
@@ -310,8 +418,7 @@ def send_message(recipient_id, message_text, save=True):
     data = {"recipient": {"id": recipient_id}, "message": {"text": message_text}, "messaging_type": "RESPONSE"}
     r = requests.post(url, json=data, timeout=10)
     logger.info(f"Send: {r.status_code}")
-    if save:
-        db_save_message(recipient_id, 'out', message_text)
+    if save: db_save_message(recipient_id, 'out', message_text)
     return r.status_code
 
 def send_random_photo(sender_id):
@@ -332,22 +439,16 @@ def generate_and_send_voice(sender_id, text):
         import uuid
         filename = f"maya_{uuid.uuid4().hex[:8]}.mp3"
         tmp_path = f"/tmp/{filename}"
-
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
         headers = {"xi-api-key": ELEVENLABS_KEY, "Content-Type": "application/json", "Accept": "audio/mpeg"}
         payload = {"text": text, "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75, "style": 0.3, "use_speaker_boost": True}}
-
         r = requests.post(url, headers=headers, json=payload, timeout=30)
         if r.status_code == 200:
-            with open(tmp_path, 'wb') as f:
-                f.write(r.content)
+            with open(tmp_path, 'wb') as f: f.write(r.content)
             with open(tmp_path, 'rb') as f:
                 upload_r = requests.post(AUDIO_UPLOAD_URL, files={"audio": (filename, f, "audio/mpeg")}, timeout=30)
-            try:
-                audio_url = upload_r.json().get("url", f"{AUDIO_BASE_URL}{filename}")
-            except:
-                audio_url = f"{AUDIO_BASE_URL}{filename}"
-
+            try: audio_url = upload_r.json().get("url", f"{AUDIO_BASE_URL}{filename}")
+            except: audio_url = f"{AUDIO_BASE_URL}{filename}"
             msg_url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
             data = {"recipient": {"id": sender_id}, "message": {"attachment": {"type": "audio", "payload": {"url": audio_url, "is_reusable": False}}}, "messaging_type": "RESPONSE"}
             requests.post(msg_url, json=data, timeout=15)
@@ -407,13 +508,11 @@ def get_ai_reply(prompt, text, history=None):
 def process_and_send(sender_id, text):
     send_seen(sender_id)
     send_typing(sender_id)
-
     new_user = is_new_user(sender_id)
     db_save_user(sender_id)
     db_save_message(sender_id, 'in', text)
     detected = detect_and_save_name(sender_id, text)
 
-    # নতুন user — নাম জিজ্ঞেস করো
     if new_user and not detected and not db_get_user_name(sender_id):
         time.sleep(1)
         send_message(sender_id, "আমি মায়া। তোমার নামটা বলো না, তোমাকে নাম ধরে ডাকতে চাই।")
@@ -429,8 +528,7 @@ def process_and_send(sender_id, text):
         send_message(sender_id, "একটু অপেক্ষা করো, ভয়েস পাঠাচ্ছি।", save=False)
         reply = get_ai_reply(get_system_prompt(sender_id), "একটা মিষ্টি ভালোবাসার কথা বলো এক লাইনে।")
         if reply:
-            reply = " ".join(reply.split()).replace('\n', ' ')
-            generate_and_send_voice(sender_id, reply)
+            generate_and_send_voice(sender_id, " ".join(reply.split()))
         return
 
     emoji_reply = get_emoji_reply(text)
@@ -447,7 +545,6 @@ def process_and_send(sender_id, text):
 
     history = db_get_history(sender_id, 10)
     reply = get_ai_reply(get_system_prompt(sender_id), text, history)
-
     if reply:
         reply = " ".join(reply.split()).replace('\n', ' ')
         if not reply.endswith(('।', '?', '!')): reply += '।'
@@ -459,7 +556,6 @@ def process_and_send(sender_id, text):
 # ================================================================
 def send_bulk(message):
     users = get_all_user_ids()
-    logger.info(f"Bulk sending to {len(users)} users")
     for uid in users:
         try:
             send_message(uid, message)
@@ -469,24 +565,19 @@ def send_bulk(message):
 def auto_message_scheduler():
     sent_today = {"morning": None, "night": None}
     last_3h = 0
-
     MORNING = ["শুভ সকাল! ঘুম থেকে উঠেছো? আমি তোমার কথা ভাবছিলাম।", "সকাল হয়ে গেছে উঠো! তোমার মুখটা দেখতে ইচ্ছে করছে।", "শুভ সকাল সোনা। আজকের দিনটা সুন্দর হোক তোমার।"]
     NIGHT = ["শুভরাত্রি! ঘুমাও, ভালো স্বপ্ন দেখো।", "রাত হয়ে গেছে, ঘুমাও। কাল আবার কথা হবে।", "শুভ রাত। তোমাকে ছাড়া রাতগুলো লম্বা মনে হয়।"]
     THREE_H = ["কী করছো এখন? আমার কথা মনে পড়ছে?", "একটু কথা বলতে ইচ্ছে করছে তোমার সাথে।", "তোমাকে miss করছি, একটু সময় দাও।", "অনেকক্ষণ হলো কথা হয়নি, কেমন আছো?"]
-
     while True:
         try:
             bd_hour = (datetime.utcnow().hour + 6) % 24
             bd_date = datetime.utcnow().strftime("%Y-%m-%d")
-
             if bd_hour == 8 and sent_today["morning"] != bd_date:
                 sent_today["morning"] = bd_date
                 threading.Thread(target=send_bulk, args=(random.choice(MORNING),), daemon=True).start()
-
             if bd_hour == 0 and sent_today["night"] != bd_date:
                 sent_today["night"] = bd_date
                 threading.Thread(target=send_bulk, args=(random.choice(NIGHT),), daemon=True).start()
-
             if time.time() - last_3h >= 10800:
                 last_3h = time.time()
                 inactive = get_inactive_user_ids(3)
@@ -502,7 +593,7 @@ def auto_message_scheduler():
         time.sleep(60)
 
 # ================================================================
-# API ROUTES for Dashboard
+# API ROUTES
 # ================================================================
 def check_admin(req):
     return req.headers.get("X-Admin-Pass") == ADMIN_PASS
@@ -510,52 +601,70 @@ def check_admin(req):
 @app.route("/api/stats")
 def api_stats():
     if not check_admin(request): return jsonify({"error": "unauthorized"}), 401
-    res = bridge("stats")
-    return jsonify(res or {})
+    conn = get_db()
+    if not conn: return jsonify({"error": "db error"}), 500
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT COUNT(*) as t FROM users"); total = c.fetchone()['t']
+            c.execute("SELECT COUNT(*) as t FROM users WHERE DATE(last_seen)=CURDATE()"); active = c.fetchone()['t']
+            c.execute("SELECT COUNT(*) as t FROM messages WHERE DATE(created_at)=CURDATE()"); today = c.fetchone()['t']
+            c.execute("SELECT COUNT(*) as t FROM messages"); total_m = c.fetchone()['t']
+        return jsonify({"total_users": total, "active_today": active, "msgs_today": today, "total_msgs": total_m})
+    finally: conn.close()
 
 @app.route("/api/users")
 def api_users():
     if not check_admin(request): return jsonify({"error": "unauthorized"}), 401
-    res = bridge("get_users")
-    return jsonify(res or [])
+    conn = get_db()
+    if not conn: return jsonify([])
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT id,name,first_seen,last_seen,message_count FROM users ORDER BY last_seen DESC LIMIT 200")
+            rows = c.fetchall()
+            for r in rows:
+                r['first_seen'] = str(r['first_seen'])
+                r['last_seen'] = str(r['last_seen'])
+        return jsonify(rows)
+    finally: conn.close()
 
 @app.route("/api/history/<user_id>")
 def api_history(user_id):
     if not check_admin(request): return jsonify({"error": "unauthorized"}), 401
-    res = bridge("get_history", {"user_id": user_id, "limit": 25})
-    return jsonify(res or [])
+    conn = get_db()
+    if not conn: return jsonify([])
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT direction,message,msg_type,created_at FROM messages WHERE user_id=%s ORDER BY created_at DESC LIMIT 50", (user_id,))
+            rows = c.fetchall()
+            for r in rows: r['created_at'] = str(r['created_at'])
+        return jsonify(rows)
+    finally: conn.close()
 
 @app.route("/api/send", methods=["POST"])
 def api_send():
     if not check_admin(request): return jsonify({"error": "unauthorized"}), 401
     data = request.json
-    user_id = data.get("user_id")
-    message = data.get("message")
-    if not user_id or not message: return jsonify({"error": "missing fields"}), 400
-    if user_id == "all":
-        threading.Thread(target=send_bulk, args=(message,), daemon=True).start()
+    uid = data.get("user_id"); msg = data.get("message")
+    if not uid or not msg: return jsonify({"error": "missing"}), 400
+    if uid == "all":
+        threading.Thread(target=send_bulk, args=(msg,), daemon=True).start()
         return jsonify({"success": True})
-    else:
-        status = send_message(user_id, message)
-        return jsonify({"success": status == 200})
+    return jsonify({"success": send_message(uid, msg) == 200})
 
 @app.route("/api/delete_user", methods=["POST"])
 def api_delete_user():
     if not check_admin(request): return jsonify({"error": "unauthorized"}), 401
-    user_id = request.json.get("user_id")
-    res = delete_user_db(user_id)
-    return jsonify(res or {"error": "failed"})
+    uid = request.json.get("user_id")
+    return jsonify({"success": delete_user_db(uid)})
 
 @app.route("/api/setting", methods=["GET", "POST"])
 def api_setting():
     if not check_admin(request): return jsonify({"error": "unauthorized"}), 401
     if request.method == "GET":
-        key = request.args.get("key")
-        return jsonify({"value": db_get_setting(key)})
-    else:
-        data = request.json
-        db_set_setting(data.get("key"), data.get("value"))
-        return jsonify({"success": True})
+        return jsonify({"value": db_get_setting(request.args.get("key"))})
+    data = request.json
+    db_set_setting(data.get("key"), data.get("value"))
+    return jsonify({"success": True})
 
 # ================================================================
 # WEBHOOK
@@ -584,7 +693,6 @@ def index(): return "Maya is running! 💖"
 @app.route("/ping")
 def ping(): return "PONG", 200
 
-# Init
 init_db()
 threading.Thread(target=auto_message_scheduler, daemon=True).start()
 
