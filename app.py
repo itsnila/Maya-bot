@@ -609,7 +609,26 @@ def api_stats():
             c.execute("SELECT COUNT(*) as t FROM users WHERE DATE(last_seen)=CURDATE()"); active = c.fetchone()['t']
             c.execute("SELECT COUNT(*) as t FROM messages WHERE DATE(created_at)=CURDATE()"); today = c.fetchone()['t']
             c.execute("SELECT COUNT(*) as t FROM messages"); total_m = c.fetchone()['t']
-        return jsonify({"total_users": total, "active_today": active, "msgs_today": today, "total_msgs": total_m})
+            c.execute("SELECT COUNT(*) as t FROM messages WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)"); week_m = c.fetchone()['t']
+            c.execute("SELECT COUNT(*) as t FROM messages WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)"); month_m = c.fetchone()['t']
+            c.execute("SELECT COUNT(*) as t FROM users WHERE first_seen >= DATE_SUB(NOW(), INTERVAL 7 DAY)"); new_week = c.fetchone()['t']
+            c.execute("SELECT COUNT(*) as t FROM users WHERE first_seen >= DATE_SUB(NOW(), INTERVAL 30 DAY)"); new_month = c.fetchone()['t']
+            # daily msgs for last 7 days
+            c.execute("""SELECT DATE(created_at) as d, COUNT(*) as cnt FROM messages
+                WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+                GROUP BY DATE(created_at) ORDER BY d""")
+            daily = {str(r['d']): r['cnt'] for r in c.fetchall()}
+            # hourly today
+            c.execute("""SELECT HOUR(created_at) as h, COUNT(*) as cnt FROM messages
+                WHERE DATE(created_at)=CURDATE() GROUP BY HOUR(created_at)""")
+            hourly = {r['h']: r['cnt'] for r in c.fetchall()}
+        return jsonify({
+            "total_users": total, "active_today": active,
+            "msgs_today": today, "total_msgs": total_m,
+            "msgs_week": week_m, "msgs_month": month_m,
+            "new_users_week": new_week, "new_users_month": new_month,
+            "daily": daily, "hourly": hourly
+        })
     finally: conn.close()
 
 @app.route("/api/users")
