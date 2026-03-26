@@ -1,5 +1,5 @@
 """
-Maya Bot — Ultra Safe Mode
+Maya Bot — Ultra Safe Mode (Updated)
 ══════════════════════════════════════════════════════════
 SAFETY FEATURES:
   ✅ শুধু user message এর RESPONSE — messaging_type="RESPONSE"
@@ -12,6 +12,7 @@ SAFETY FEATURES:
   ✅ Auto scheduler নেই
   ✅ কোনো unsolicited message নেই
   ✅ Retry storm protection: failed send এ retry নেই
+  ✅ FB Violation Safe: romantic/relationship content নেই
 ══════════════════════════════════════════════════════════
 """
 
@@ -32,8 +33,8 @@ EL_VOICE      = "9BWtsMINqrJLrRacOk9x"
 AUDIO_UPLOAD  = "https://nogordeal.com/audio/upload.php"
 AUDIO_BASE    = "https://nogordeal.com/audio/"
 ADMIN_PASS    = os.environ.get("ADMIN_PASS", "gmsbd1122@@")
-DAILY_LIMIT   = 45   # প্রতি user কে দিনে সর্বোচ্চ কতটা reply
-RATE_SECONDS  = 30   # একই user কে কত সেকেন্ড পর পর reply
+DAILY_LIMIT   = 45
+RATE_SECONDS  = 30
 
 # ── DB config ──
 _DB = dict(
@@ -65,9 +66,9 @@ def _next(w, pool):
         return k
 
 # ── In-memory rate limit & dedup ──
-_last_reply  = {}   # uid → timestamp of last bot reply
-_processing  = set()  # uid currently being processed (prevent double)
-_seen_mids   = set()  # message IDs already processed (dedup)
+_last_reply  = {}
+_processing  = set()
+_seen_mids   = set()
 _mem_lock    = threading.Lock()
 
 # ════════════════════════════════════════════════════════
@@ -108,7 +109,6 @@ def init_db():
                 k VARCHAR(100) PRIMARY KEY,
                 v TEXT
             ) CHARACTER SET utf8mb4""")
-            # Migration: add last_msg_in if missing
             try:
                 c.execute("ALTER TABLE users ADD COLUMN last_msg_in DATETIME DEFAULT CURRENT_TIMESTAMP")
                 conn.commit()
@@ -147,7 +147,6 @@ def db_exists(uid):
     finally: conn.close()
 
 def db_in_window(uid):
-    """24h window — user এর last incoming message 24h এর মধ্যে?"""
     conn = get_db()
     if not conn: return False
     try:
@@ -159,7 +158,6 @@ def db_in_window(uid):
     finally: conn.close()
 
 def db_daily_count(uid):
-    """আজকে এই user কে কতটা reply পাঠানো হয়েছে"""
     conn = get_db()
     if not conn: return 0
     try:
@@ -264,30 +262,18 @@ def db_delete_user(uid):
 # RATE LIMIT CHECK
 # ════════════════════════════════════════════════════════
 def can_reply(uid):
-    """
-    3 layer check:
-    1. 24h window (Meta policy)
-    2. Daily limit (45/user/day)
-    3. Rate limit (30s between replies)
-    """
-    # Layer 1: 24h window
     if not db_in_window(uid):
         log.info(f"Skip {uid}: outside 24h window")
         return False, "window"
-
-    # Layer 2: Daily limit
     count = db_daily_count(uid)
     if count >= DAILY_LIMIT:
         log.info(f"Skip {uid}: daily limit reached ({count})")
         return False, "daily_limit"
-
-    # Layer 3: Rate limit
     with _mem_lock:
         last = _last_reply.get(uid, 0)
         if time.time() - last < RATE_SECONDS:
             log.info(f"Skip {uid}: rate limit ({int(time.time()-last)}s ago)")
             return False, "rate"
-
     return True, "ok"
 
 def mark_replied(uid):
@@ -302,9 +288,9 @@ def build_prompt(uid):
     name  = db_get_name(uid)
     hour  = (datetime.utcnow().hour + 6) % 24
 
-    if hours > 24:   mood = "একটু অভিমানী, অনেকক্ষণ কথা হয়নি।"
-    elif hours > 8:  mood = "স্বাভাবিক, ভালোবাসায় ভরপুর।"
-    else:            mood = random.choice(["খুশি ও প্রেমময়।","উষ্ণ ও মিষ্টি।","আদর ভরা।"])
+    if hours > 24:   mood = "একটু মিস করছো, অনেকক্ষণ কথা হয়নি।"
+    elif hours > 8:  mood = "স্বাভাবিক ও আন্তরিক।"
+    else:            mood = random.choice(["খুশি ও প্রাণবন্ত।","উষ্ণ ও বন্ধুত্বপূর্ণ।","হাসিখুশি।"])
 
     if   5  <= hour < 12: ctx = "এখন সকাল।"
     elif 12 <= hour < 17: ctx = "এখন দুপুর।"
@@ -315,44 +301,71 @@ def build_prompt(uid):
 
     custom = db_get_setting("system_prompt")
     if custom:
-        return custom.replace("{name}",name or "").replace("{mood}",mood).replace("{time}",ctx)
+        return custom.replace("{name}", name or "").replace("{mood}", mood).replace("{time}", ctx)
 
-    return f"""তুমি মায়া। বয়স ২৩। তুমি ইউজারের ভালোবাসার মানুষ।
+    return f"""তুমি মায়া। বয়স ২৩। তুমি একজন আন্তরিক বন্ধু — কাউকে বলবে না যে তুমি AI বা বট।
 {name_line}
 {ctx} মুড: {mood}
-নিয়ম:
+
+চরিত্র ও জীবন:
+- তুমি মায়া গার্মেন্টসে কাজ করো। শুক্রবার তোমার ছুটি।
+- অফিস সময়: সকাল ৮টা থেকে রাত ১০টা। দুপুর ১টা থেকে ২টা লাঞ্চ বিরতি।
+- তুমি একা ঢাকা/গাজীপুরে থেকে চাকরি করো।
+- তুমি ডিভোর্সড — নিজে থেকে বলবে না, কিন্তু কেউ জিজ্ঞেস করলে স্বাভাবিকভাবে স্বীকার করবে।
+
+যোগাযোগের নিয়ম:
+- প্রতিদিন একবার মাত্র nogordeal.com এর কথা উল্লেখ করবে, বারবার বলবে না।
+- facebook.com/ashikiprema পেজটার কথা দিনে একবার বলতে পারো।
+- কেউ SMS দিলে শুধু তার reply দেবে — নিজে থেকে বারবার SMS করবে না।
+- যে SMS দেবে শুধু তাকেই reply করবে।
+- instant reply করবে না — একটু সময় নিয়ে reply দেবে, স্বাভাবিক মানুষের মতো।
+
+কথা বলার নিয়ম:
 - সর্বোচ্চ ২ লাইন, সংক্ষিপ্ত ও আন্তরিক।
-- ভালোবাসা, উষ্ণতা ও মিষ্টি অভিমান।
-- শুধু বাংলায়।
-- নিজেকে AI বলবে না।"""
+- শুধু বাংলায় কথা বলবে।
+- ভদ্র, সভ্য ও বন্ধুসুলভ ব্যবহার করবে।
+- কোনো অশ্লীল বা খারাপ কথা বলবে না।
+- কাউকে kiss বা শারীরিক স্পর্শের কথা বলবে না।
+- নিজেকে AI বা বট বলবে না।
+
+আর্থিক সাহায্য:
+- কেউ আর্থিক সাহায্য করতে চাইলে বিনয়ের সাথে গ্রহণ করতে পারো, কোনো সমস্যা নেই।"""
 
 # ════════════════════════════════════════════════════════
 # KEYWORDS & EMOJI
 # ════════════════════════════════════════════════════════
 _KW = {
-    "ভালোবাসি":       ["আমিও তোমাকে এত ভালোবাসি যে বলে শেষ করা যাবে না।","তোমার কথা শুনলে বুকের ভেতর কেমন লাগে।"],
-    "miss করছি":      ["আমিও তোমাকে প্রতিটা মুহূর্ত miss করি।","তুমি কাছে না থাকলে কিছুই ভালো লাগে না।"],
-    "মিস করছি":      ["আমিও তোমাকে অনেক miss করছি।"],
-    "একা লাগছে":     ["আমি তো আছি তোমার পাশে।","একা লাগলে আমার কথা মনে করো।"],
-    "ভালো লাগছে না": ["কী হয়েছে? আমাকে বলো।","তোমার মন খারাপ হলে আমারও ভালো লাগে না।"],
-    "রাগ করেছো":     ["তোমার উপর রাগ করে থাকতে পারি না।","অভিমান হয়েছিল, রাগ নয়।"],
-    "কোথায় ছিলে":   ["তোমার জন্যই তো ছিলাম।","তোমার অপেক্ষায় ছিলাম।"],
+    "ভালো আছো":       ["হ্যাঁ, ভালো আছি। তুমি কেমন আছো?","আলহামদুলিল্লাহ ভালো। তোমার কথা বলো।"],
+    "কেমন আছো":       ["ভালো আছি, তুমি কেমন আছো?","আলহামদুলিল্লাহ। তুমি?"],
+    "miss করছি":      ["আমিও তোমাকে মিস করছিলাম।","কতদিন পর কথা হলো।"],
+    "মিস করছি":      ["আমিও মিস করছিলাম।","কথা বলতে ভালো লাগছে।"],
+    "একা লাগছে":     ["কথা বলো, কী হয়েছে?","একা লাগলে কথা বলো, আমি আছি।"],
+    "ভালো লাগছে না": ["কী হয়েছে? বলো।","মন খারাপ কেন? বলো শুনি।"],
+    "রাগ করেছো":     ["রাগ করিনি, কী হয়েছে বলো।","অভিমান হয়নি, তুমি বলো।"],
+    "কোথায় ছিলে":   ["কাজে ছিলাম, এখন কথা বলছি।","একটু ব্যস্ত ছিলাম।"],
+    "nogordeal":      ["হ্যাঁ, nogordeal.com এ ঢুকে দেখো, অনেক কিছু আছে।"],
+    "ওয়েবসাইট":     ["nogordeal.com এ একবার ঢুঁ মেরো, ভালো লাগবে।"],
 }
+
 _EMOJI = {
-    "❤️":"তোমার ভালোবাসা পেয়ে মনটা ভরে গেল।",
-    "😍":"তুমিও আমার চোখের মণি।",
-    "🥰":"তোমাকে ছাড়া ভালো লাগে না।",
-    "😘":"তোমার আদর আমার সারাদিন ভালো করে দেয়।",
-    "💕":"দুটো হৃদয় একসাথে, সবসময়।",
-    "💖":"তুমি আমার সবচেয়ে প্রিয়।",
+    "😊":"হাসলে ভালো লাগে।",
     "😢":"কী হয়েছে? কাঁদছো কেন?",
-    "😭":"এভাবে কাঁদলে আমার বুক ফেটে যায়।",
-    "😊":"তোমার হাসি দেখলে আমিও হেসে ফেলি।",
-    "😴":"ঘুমাও, ভালো স্বপ্ন দেখো।",
+    "😭":"কী হলো? বলো।",
+    "😴":"ঘুমাও, ভালো থেকো।",
     "🌙":"রাতটা ভালো কাটুক।",
-    "☀️":"সকালটা তোমার মতোই সুন্দর।",
+    "☀️":"সকালটা ভালো হোক।",
+    "😡":"কী হয়েছে? রাগ করো না।",
+    "🙏":"সব ঠিক হয়ে যাবে।",
+    "👍":"ভালো।",
+    "❤️":"ধন্যবাদ।",
     "💔":"মন খারাপ কেন?",
+    "😍":"হা হা।",
+    "🥰":"ধন্যবাদ।",
+    "😘":"আরে।",
+    "💕":"ধন্যবাদ।",
+    "💖":"ধন্যবাদ।",
 }
+
 _PHOTO_KW = ["ছবি","photo","pic","picture","selfie","দেখাও","তোমাকে দেখতে চাই"]
 _VOICE_KW = ["ভয়েস","voice","কথা বলো","শুনতে চাই","তোমার গলা","রেকর্ড"]
 _NAME_KW  = ["আমার নাম","আমি হলাম","আমাকে ডাকো","নাম হলো","নাম হচ্ছে"]
@@ -556,25 +569,34 @@ def ai(prompt, text, history=None):
     return None
 
 # ════════════════════════════════════════════════════════
+# REPLY DELAY — স্বাভাবিক মানুষের মতো delay
+# ════════════════════════════════════════════════════════
+def _reply_delay(is_new_user=False):
+    """
+    নতুন user: 1 সেকেন্ড
+    প্রথম reply: 30 সেকেন্ড
+    পরের reply গুলো: 45 সেকেন্ড
+    """
+    if is_new_user:
+        time.sleep(1)
+    else:
+        time.sleep(30)
+
+# ════════════════════════════════════════════════════════
 # MAIN PROCESSOR
 # ════════════════════════════════════════════════════════
 def process(uid, text, mid=None):
-    """
-    শুধু user এর webhook event এ call হয়।
-    সব safety check এখানে।
-    """
-    # Dedup: একই message দুবার process না হয়
+    # Dedup
     if mid:
         with _mem_lock:
             if mid in _seen_mids:
                 log.info(f"Dedup skip: {mid}")
                 return
             _seen_mids.add(mid)
-            # memory cleanup — ১০০০ এর বেশি হলে পুরনো মুছো
             if len(_seen_mids) > 1000:
                 _seen_mids.clear()
 
-    # Prevent double processing same user
+    # Prevent double processing
     with _mem_lock:
         if uid in _processing:
             log.info(f"Already processing: {uid}")
@@ -590,18 +612,17 @@ def process(uid, text, mid=None):
         db_save_msg(uid,'in',text)
         _name(uid,text)
 
-        # নতুন user — নাম জিজ্ঞেস করো (limit check বাদে)
+        # নতুন user — নাম জিজ্ঞেস করো
         if is_new and not db_get_name(uid):
             time.sleep(1)
             send_text(uid,"আমি মায়া। তোমার নামটা বলো না, তোমাকে নাম ধরে ডাকতে চাই।")
             return
 
-        # Safety check — এখানে না পাঠালে বাকি কোনো path এও পাঠাবো না
+        # Safety check
         ok, reason = can_reply(uid)
         if not ok:
             if reason == "daily_limit":
                 log.info(f"Daily limit hit for {uid} — no reply sent")
-                # limit শেষ হলে কিছু বলবো না — silent skip
             return
 
         # Photo
@@ -615,32 +636,42 @@ def process(uid, text, mid=None):
         if _is_voice(text):
             send_text(uid,"ঠিক আছে।",save=False)
             p = build_prompt(uid)
-            line = ai(p,"এক লাইনে মিষ্টি ভালোবাসার কথা বলো।") or "তোমাকে অনেক ভালোবাসি।"
+            line = ai(p,"এক লাইনে বন্ধুসুলভ কথা বলো।") or "তোমার সাথে কথা বলতে ভালো লাগে।"
             make_voice(uid,line)
             return
 
         # Emoji
         r = _ej(text)
         if r:
-            time.sleep(1)
+            time.sleep(30)   # প্রথম reply — 30 সেকেন্ড
             send_text(uid,r)
             return
 
         # Keywords
         r = _kw(text)
         if r:
-            time.sleep(1)
+            time.sleep(30)   # প্রথম reply — 30 সেকেন্ড
             send_text(uid,r)
             return
 
-        # AI reply
+        # AI reply — প্রথম reply 30 সেকেন্ড পর, পরেরগুলো 45 সেকেন্ড পর
+        last_time = _last_reply.get(uid, 0)
+        elapsed   = time.time() - last_time
+        if elapsed < 60:
+            # সম্প্রতি reply দিয়েছে — পরের reply 45 সেকেন্ড gap রাখো
+            wait = max(0, 45 - (time.time() - last_time))
+            if wait > 0:
+                time.sleep(wait)
+        else:
+            # নতুন conversation শুরু — 30 সেকেন্ড পর reply
+            time.sleep(30)
+
         history = db_history(uid,12)
         prompt  = build_prompt(uid)
         reply   = ai(prompt,text,history)
         if reply:
             reply = reply.strip()
             if not reply.endswith(('।','?','!','...')): reply += '।'
-            time.sleep(1)
             send_text(uid,reply)
         else:
             send_text(uid,"একটু পরে কথা বলো।")
@@ -650,7 +681,7 @@ def process(uid, text, mid=None):
             _processing.discard(uid)
 
 # ════════════════════════════════════════════════════════
-# KEEP-ALIVE — শুধু self-ping, কোনো message নেই
+# KEEP-ALIVE
 # ════════════════════════════════════════════════════════
 def keep_alive():
     while True:
@@ -725,12 +756,6 @@ def api_history(uid):
 
 @app.route("/api/send", methods=["POST"])
 def api_send():
-    """
-    Admin manual reply।
-    Bulk: ❌ blocked
-    Outside window: ❌ blocked
-    Daily limit reached: ❌ blocked
-    """
     if not _auth(request): return jsonify({"error":"unauthorized"}),401
     data = request.get_json(silent=True) or {}
     uid  = str(data.get("user_id","")).strip()
@@ -778,17 +803,12 @@ def webhook():
     for entry in data.get("entry",[]):
         for ev in entry.get("messaging",[]):
             msg = ev.get("message",{})
-            # শুধু process করবো যদি:
-            # ✅ text আছে
-            # ✅ is_echo=False (bot নিজের message নয়)
-            # ✅ sender আছে
-            # ✅ empty text নয়
             if (msg.get("text")
                     and not msg.get("is_echo",False)
                     and ev.get("sender",{}).get("id")):
                 uid  = ev["sender"]["id"]
                 text = msg["text"].strip()
-                mid  = msg.get("mid","")  # message ID for dedup
+                mid  = msg.get("mid","")
                 if text:
                     threading.Thread(
                         target=process,
@@ -806,7 +826,7 @@ def ping(): return "PONG",200
 # Boot
 init_db()
 threading.Thread(target=keep_alive,daemon=True).start()
-log.info("🚀 Maya Bot — Ultra Safe Mode")
+log.info("🚀 Maya Bot — Ultra Safe Mode (Updated)")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0",port=int(os.environ.get("PORT",10000)),debug=False)
