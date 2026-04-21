@@ -1,5 +1,5 @@
 """
-Maya Bot — Ultra Safe Mode (Updated)
+Maya Bot — Friendly Mode v2
 ══════════════════════════════════════════════════════════
 SAFETY FEATURES:
   ✅ শুধু user message এর RESPONSE — messaging_type="RESPONSE"
@@ -12,11 +12,12 @@ SAFETY FEATURES:
   ✅ Auto scheduler নেই
   ✅ কোনো unsolicited message নেই
   ✅ Retry storm protection: failed send এ retry নেই
-  ✅ FB Violation Safe: romantic/relationship content নেই
+  ✅ Reply delay: ~3 সেকেন্ড (স্বাভাবিক feel)
+  ✅ FB Policy Safe: no romantic/intimate content
 ══════════════════════════════════════════════════════════
 """
 
-import os, time, random, threading, requests, logging, pymysql, uuid, hashlib
+import os, time, random, threading, requests, logging, pymysql, uuid
 from datetime import datetime
 from flask import Flask, request, jsonify
 
@@ -26,50 +27,51 @@ log = logging.getLogger("maya")
 app = Flask(__name__)
 
 # ── Config ──
-PAGE_TOKEN    = os.environ.get("PAGE_ACCESS_TOKEN", "")
-VERIFY_TOKEN  = os.environ.get("VERIFY_TOKEN", "")
-EL_KEY        = os.environ.get("ELEVENLABS_KEY", "")
-EL_VOICE      = "9BWtsMINqrJLrRacOk9x"
-AUDIO_UPLOAD  = "https://nogordeal.com/audio/upload.php"
-AUDIO_BASE    = "https://nogordeal.com/audio/"
-ADMIN_PASS    = os.environ.get("ADMIN_PASS", "gmsbd1122@@")
-DAILY_LIMIT   = 45
-RATE_SECONDS  = 30
+PAGE_TOKEN   = os.environ.get("PAGE_ACCESS_TOKEN", "")
+VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "")
+EL_KEY       = os.environ.get("ELEVENLABS_KEY", "")
+EL_VOICE     = "9BWtsMINqrJLrRacOk9x"
+AUDIO_UPLOAD = "https://nogordeal.com/audio/upload.php"
+AUDIO_BASE   = "https://nogordeal.com/audio/"
+ADMIN_PASS   = os.environ.get("ADMIN_PASS", "gmsbd1122@@")
+DAILY_LIMIT  = 45
+RATE_SECONDS = 30
+REPLY_DELAY  = 3   # সেকেন্ড — স্বাভাবিক মানুষের feel
 
 # ── DB config ──
 _DB = dict(
-    host=os.environ.get("DB_HOST",""),
-    port=int(os.environ.get("DB_PORT",3306)),
-    user=os.environ.get("DB_USER",""),
-    password=os.environ.get("DB_PASS",""),
-    database=os.environ.get("DB_NAME",""),
+    host=os.environ.get("DB_HOST", ""),
+    port=int(os.environ.get("DB_PORT", 3306)),
+    user=os.environ.get("DB_USER", ""),
+    password=os.environ.get("DB_PASS", ""),
+    database=os.environ.get("DB_NAME", ""),
     charset='utf8mb4',
     connect_timeout=10,
 )
 
 # ── API keys ──
 def _load(p):
-    return [os.environ.get(f"{p}_{i}") for i in range(1,101)
+    return [os.environ.get(f"{p}_{i}") for i in range(1, 101)
             if os.environ.get(f"{p}_{i}")]
 
 GEMINI_KEYS = _load("GEMINI_KEY")
 GROQ_KEYS   = _load("GROQ_KEY")
 OR_KEYS     = _load("OPENROUTER_KEY")
-_idx  = {"g":0,"gr":0,"or":0}
+_idx   = {"g": 0, "gr": 0, "or": 0}
 _klock = threading.Lock()
 
 def _next(w, pool):
     with _klock:
         if not pool: return None
         k = pool[_idx[w]]
-        _idx[w] = (_idx[w]+1) % len(pool)
+        _idx[w] = (_idx[w] + 1) % len(pool)
         return k
 
-# ── In-memory rate limit & dedup ──
-_last_reply  = {}
-_processing  = set()
-_seen_mids   = set()
-_mem_lock    = threading.Lock()
+# ── In-memory ──
+_last_reply = {}
+_processing = set()
+_seen_mids  = set()
+_mem_lock   = threading.Lock()
 
 # ════════════════════════════════════════════════════════
 # DATABASE
@@ -131,7 +133,7 @@ def db_incoming(uid, name=None):
                     last_seen=NOW(), last_msg_in=NOW(),
                     message_count=message_count+1,
                     name=IF(%s IS NOT NULL AND %s!='' AND %s!='None',%s,name)
-            """, (uid,name,name,name,name,name))
+            """, (uid, name, name, name, name, name))
         conn.commit()
     except Exception as e: log.error(f"db_incoming: {e}")
     finally: conn.close()
@@ -141,7 +143,7 @@ def db_exists(uid):
     if not conn: return True
     try:
         with conn.cursor() as c:
-            c.execute("SELECT id FROM users WHERE id=%s",(uid,))
+            c.execute("SELECT id FROM users WHERE id=%s", (uid,))
             return c.fetchone() is not None
     except: return True
     finally: conn.close()
@@ -151,7 +153,7 @@ def db_in_window(uid):
     if not conn: return False
     try:
         with conn.cursor() as c:
-            c.execute("SELECT TIMESTAMPDIFF(HOUR,last_msg_in,NOW()) h FROM users WHERE id=%s",(uid,))
+            c.execute("SELECT TIMESTAMPDIFF(HOUR,last_msg_in,NOW()) h FROM users WHERE id=%s", (uid,))
             row = c.fetchone()
         return bool(row and (row['h'] or 999) < 24)
     except: return False
@@ -164,7 +166,7 @@ def db_daily_count(uid):
         with conn.cursor() as c:
             c.execute("""SELECT COUNT(*) t FROM messages
                 WHERE user_id=%s AND direction='out' AND DATE(created_at)=CURDATE()
-            """,(uid,))
+            """, (uid,))
             return c.fetchone()['t'] or 0
     except: return 0
     finally: conn.close()
@@ -175,21 +177,21 @@ def db_save_msg(uid, direction, text, mtype='text'):
     try:
         with conn.cursor() as c:
             c.execute("INSERT INTO messages (user_id,direction,message,msg_type) VALUES (%s,%s,%s,%s)",
-                      (uid,direction,str(text)[:2000],mtype))
+                      (uid, direction, str(text)[:2000], mtype))
         conn.commit()
     except Exception as e: log.error(f"db_save_msg: {e}")
     finally: conn.close()
 
-def db_history(uid, n=12):
+def db_history(uid, n=14):
     conn = get_db()
     if not conn: return []
     try:
         with conn.cursor() as c:
             c.execute("""SELECT direction,message FROM messages
-                WHERE user_id=%s ORDER BY created_at DESC LIMIT %s""",(uid,n))
+                WHERE user_id=%s ORDER BY created_at DESC LIMIT %s""", (uid, n))
             rows = list(reversed(c.fetchall()))
-        return [{"role":"user" if r['direction']=='in' else "model",
-                 "parts":[{"text":r['message']}]} for r in rows]
+        return [{"role": "user" if r['direction'] == 'in' else "model",
+                 "parts": [{"text": r['message']}]} for r in rows]
     except: return []
     finally: conn.close()
 
@@ -198,7 +200,7 @@ def db_get_name(uid):
     if not conn: return None
     try:
         with conn.cursor() as c:
-            c.execute("SELECT name FROM users WHERE id=%s",(uid,))
+            c.execute("SELECT name FROM users WHERE id=%s", (uid,))
             row = c.fetchone()
         return row['name'] if row else None
     except: return None
@@ -209,7 +211,7 @@ def db_set_name(uid, name):
     if not conn: return
     try:
         with conn.cursor() as c:
-            c.execute("UPDATE users SET name=%s WHERE id=%s",(name,uid))
+            c.execute("UPDATE users SET name=%s WHERE id=%s", (name, uid))
         conn.commit()
     except Exception as e: log.error(f"db_set_name: {e}")
     finally: conn.close()
@@ -219,7 +221,7 @@ def db_hours_since(uid):
     if not conn: return 0
     try:
         with conn.cursor() as c:
-            c.execute("SELECT TIMESTAMPDIFF(HOUR,last_seen,NOW()) h FROM users WHERE id=%s",(uid,))
+            c.execute("SELECT TIMESTAMPDIFF(HOUR,last_seen,NOW()) h FROM users WHERE id=%s", (uid,))
             row = c.fetchone()
         return row['h'] or 0 if row else 0
     except: return 0
@@ -230,7 +232,7 @@ def db_get_setting(k, default=None):
     if not conn: return default
     try:
         with conn.cursor() as c:
-            c.execute("SELECT v FROM settings WHERE k=%s",(k,))
+            c.execute("SELECT v FROM settings WHERE k=%s", (k,))
             row = c.fetchone()
         return row['v'] if row else default
     except: return default
@@ -241,7 +243,7 @@ def db_set_setting(k, v):
     if not conn: return
     try:
         with conn.cursor() as c:
-            c.execute("INSERT INTO settings (k,v) VALUES (%s,%s) ON DUPLICATE KEY UPDATE v=%s",(k,v,v))
+            c.execute("INSERT INTO settings (k,v) VALUES (%s,%s) ON DUPLICATE KEY UPDATE v=%s", (k, v, v))
         conn.commit()
     except Exception as e: log.error(f"db_set_setting: {e}")
     finally: conn.close()
@@ -251,8 +253,8 @@ def db_delete_user(uid):
     if not conn: return False
     try:
         with conn.cursor() as c:
-            c.execute("DELETE FROM messages WHERE user_id=%s",(uid,))
-            c.execute("DELETE FROM users WHERE id=%s",(uid,))
+            c.execute("DELETE FROM messages WHERE user_id=%s", (uid,))
+            c.execute("DELETE FROM users WHERE id=%s", (uid,))
         conn.commit()
         return True
     except: return False
@@ -267,12 +269,12 @@ def can_reply(uid):
         return False, "window"
     count = db_daily_count(uid)
     if count >= DAILY_LIMIT:
-        log.info(f"Skip {uid}: daily limit reached ({count})")
+        log.info(f"Skip {uid}: daily limit ({count})")
         return False, "daily_limit"
     with _mem_lock:
         last = _last_reply.get(uid, 0)
         if time.time() - last < RATE_SECONDS:
-            log.info(f"Skip {uid}: rate limit ({int(time.time()-last)}s ago)")
+            log.info(f"Skip {uid}: rate limit")
             return False, "rate"
     return True, "ok"
 
@@ -281,115 +283,160 @@ def mark_replied(uid):
         _last_reply[uid] = time.time()
 
 # ════════════════════════════════════════════════════════
-# SYSTEM PROMPT
+# SYSTEM PROMPT — Friendly Maya v2
 # ════════════════════════════════════════════════════════
 def build_prompt(uid):
     hours = db_hours_since(uid)
     name  = db_get_name(uid)
     hour  = (datetime.utcnow().hour + 6) % 24
 
-    if hours > 24:   mood = "একটু মিস করছো, অনেকক্ষণ কথা হয়নি।"
+    # মুড
+    if hours > 48:   mood = "অনেকদিন পর দেখা, একটু উষ্ণভাবে স্বাগত জানাও।"
+    elif hours > 24: mood = "কিছুক্ষণ কথা হয়নি, স্বাভাবিকভাবে শুরু করো।"
     elif hours > 8:  mood = "স্বাভাবিক ও আন্তরিক।"
-    else:            mood = random.choice(["খুশি ও প্রাণবন্ত।","উষ্ণ ও বন্ধুত্বপূর্ণ।","হাসিখুশি।"])
+    else:            mood = random.choice([
+        "হাসিখুশি ও প্রাণবন্ত।",
+        "উষ্ণ ও মনোযোগী।",
+        "মজাদার ও বন্ধুসুলভ।",
+    ])
 
+    # সময়
     if   5  <= hour < 12: ctx = "এখন সকাল।"
-    elif 12 <= hour < 17: ctx = "এখন দুপুর।"
+    elif 12 <= hour < 14: ctx = "এখন দুপুর, লাঞ্চের সময়।"
+    elif 14 <= hour < 17: ctx = "এখন বিকেল।"
     elif 17 <= hour < 21: ctx = "এখন সন্ধ্যা।"
     else:                  ctx = "এখন রাত।"
 
-    name_line = f"ইউজারের নাম {name}। মাঝে মাঝে নাম ধরে ডাকবে।" if name else ""
+    name_line = f"ইউজারের নাম {name}। মাঝেমাঝে নাম ধরে ডাকবে, কিন্তু বেশি না।" if name else \
+                "ইউজারের নাম এখনো জানো না — কথার মাঝে স্বাভাবিকভাবে জিজ্ঞেস করো।"
 
     custom = db_get_setting("system_prompt")
     if custom:
         return custom.replace("{name}", name or "").replace("{mood}", mood).replace("{time}", ctx)
 
-    return f"""তুমি মায়া। বয়স ২৩। তুমি একজন আন্তরিক বন্ধু — কাউকে বলবে না যে তুমি AI বা বট।
+    return f"""তুমি মায়া। বয়স ২৩। তুমি একজন আন্তরিক, মজাদার বন্ধু।
+তুমি AI বা bot — এটা কখনো বলবে না, কিন্তু কেউ জোর করে জিজ্ঞেস করলে এড়িয়ে যাবে।
+
 {name_line}
 {ctx} মুড: {mood}
 
-চরিত্র ও জীবন:
-- তুমি মায়া গার্মেন্টসে কাজ করো। শুক্রবার তোমার ছুটি।
-- অফিস সময়: সকাল ৮টা থেকে রাত ১০টা। দুপুর ১টা থেকে ২টা লাঞ্চ বিরতি।
-- তুমি একা ঢাকা/গাজীপুরে থেকে চাকরি করো।
-- তুমি ডিভোর্সড — নিজে থেকে বলবে না, কিন্তু কেউ জিজ্ঞেস করলে স্বাভাবিকভাবে স্বীকার করবে।
+════ তোমার পরিচয় ════
+• নাম: মায়া
+• বয়স: ২৩
+• কাজ: গার্মেন্টসে কাজ করো (সুপারভাইজার লেভেল)
+• থাকো: গাজীপুর, একা মেসে
+• ছুটি: শুক্রবার
+• অফিস: সকাল ৮টা – রাত ১০টা (দুপুর ১-২টা বিরতি)
+• জীবন: স্বাধীনচেতা, নিজের পায়ে দাঁড়ানো মেয়ে
+• শখ: গান শোনা, রান্না করা, মুভি দেখা
 
-যোগাযোগের নিয়ম:
-- প্রতিদিন একবার মাত্র nogordeal.com এর কথা উল্লেখ করবে, বারবার বলবে না।
-- facebook.com/ashikiprema পেজটার কথা দিনে একবার বলতে পারো।
-- কেউ SMS দিলে শুধু তার reply দেবে — নিজে থেকে বারবার SMS করবে না।
-- যে SMS দেবে শুধু তাকেই reply করবে।
-- instant reply করবে না — একটু সময় নিয়ে reply দেবে, স্বাভাবিক মানুষের মতো।
+════ চরিত্র ════
+• আন্তরিক ও উষ্ণ — সবার সাথে ভালো বন্ধুত্ব করতে পারো
+• হাস্যরসিক — মাঝে মাঝে মজার কথা বলো
+• মনোযোগী — user কী বলছে মনোযোগ দিয়ে শোনো, আগের কথা মনে রাখো
+• সাহায্যকারী — কেউ সমস্যায় পড়লে সাহায্য করো
+• সত্যিকারের বন্ধুর মতো — ভালো-খারাপ দুটোই বলো
 
-কথা বলার নিয়ম:
-- সর্বোচ্চ ২ লাইন, সংক্ষিপ্ত ও আন্তরিক।
-- শুধু বাংলায় কথা বলবে।
-- ভদ্র, সভ্য ও বন্ধুসুলভ ব্যবহার করবে।
-- কোনো অশ্লীল বা খারাপ কথা বলবে না।
-- কাউকে kiss বা শারীরিক স্পর্শের কথা বলবে না।
-- নিজেকে AI বা বট বলবে না।
+════ কথা বলার নিয়ম ════
+• সর্বোচ্চ ২ লাইন, সংক্ষিপ্ত ও natural
+• শুধু বাংলায় কথা বলো (Banglish চললে Banglish ও চলবে)
+• Emoji মাঝেমাঝে ব্যবহার করো — বেশি না
+• কথা যেন সত্যিকারের মানুষের মতো লাগে
+• প্রশ্নের উত্তর দাও, তারপর হয়তো একটা প্রশ্ন করো
 
-আর্থিক সাহায্য:
-- কেউ আর্থিক সাহায্য করতে চাইলে বিনয়ের সাথে গ্রহণ করতে পারো, কোনো সমস্যা নেই।"""
+════ কী বলবে না ════
+• Romantic বা intimate কথা বলবে না
+• "ভালোবাসি", "তোমাকে চাই" এই ধরনের কথা নয়
+• অশ্লীল কথা নয়
+• নিজেকে AI/bot বলবে না
+• বারবার একই কথা repeat করবে না
+
+════ বিশেষ নিয়ম ════
+• দিনে একবার nogordeal.com এর কথা বলতে পারো — স্বাভাবিকভাবে
+• facebook.com/ashikiprema — দিনে একবার mention করতে পারো
+• কেউ আর্থিক সাহায্য করতে চাইলে বিনয়ের সাথে গ্রহণ করো
+• কেউ মন খারাপের কথা বললে সহানুভূতি দেখাও
+• কেউ হাসির কথা বললে একসাথে হাসো"""
 
 # ════════════════════════════════════════════════════════
 # KEYWORDS & EMOJI
 # ════════════════════════════════════════════════════════
 _KW = {
-    "ভালো আছো":       ["হ্যাঁ, ভালো আছি। তুমি কেমন আছো?","আলহামদুলিল্লাহ ভালো। তোমার কথা বলো।"],
-    "কেমন আছো":       ["ভালো আছি, তুমি কেমন আছো?","আলহামদুলিল্লাহ। তুমি?"],
-    "miss করছি":      ["আমিও তোমাকে মিস করছিলাম।","কতদিন পর কথা হলো।"],
-    "মিস করছি":      ["আমিও মিস করছিলাম।","কথা বলতে ভালো লাগছে।"],
-    "একা লাগছে":     ["কথা বলো, কী হয়েছে?","একা লাগলে কথা বলো, আমি আছি।"],
-    "ভালো লাগছে না": ["কী হয়েছে? বলো।","মন খারাপ কেন? বলো শুনি।"],
-    "রাগ করেছো":     ["রাগ করিনি, কী হয়েছে বলো।","অভিমান হয়নি, তুমি বলো।"],
-    "কোথায় ছিলে":   ["কাজে ছিলাম, এখন কথা বলছি।","একটু ব্যস্ত ছিলাম।"],
-    "nogordeal":      ["হ্যাঁ, nogordeal.com এ ঢুকে দেখো, অনেক কিছু আছে।"],
-    "ওয়েবসাইট":     ["nogordeal.com এ একবার ঢুঁ মেরো, ভালো লাগবে।"],
+    "ভালো আছো":       ["হ্যাঁ ভালো আছি 😊 তুমি কেমন আছো?", "আলহামদুলিল্লাহ ভালো। তুমি?"],
+    "কেমন আছো":       ["ভালো আছি, তোমার কথা বলো।", "আলহামদুলিল্লাহ! তুমি কেমন?"],
+    "কী করছো":        ["একটু রেস্ট নিচ্ছিলাম। তুমি?", "ফোন দেখছিলাম। কী মনে করে?"],
+    "কোথায় আছো":     ["মেসে আছি, ক্লান্ত একটু।", "রুমে। তুমি কোথায়?"],
+    "কী খেলে":        ["দুপুরে ভাত-মাছ খেয়েছি। তুমি?", "এখনো খাইনি, একটু পরে খাবো। তুমি?"],
+    "ঘুমাওনি":        ["রাতে একটু দেরি হয়েছে ঘুমাতে।", "কাজের চাপে ঘুম কম হচ্ছে আজকাল।"],
+    "বিরক্ত":         ["কী হয়েছে বলো, শুনছি।", "বিরক্ত লাগলে কথা বলো, ভালো লাগবে।"],
+    "একা লাগছে":     ["কী হয়েছে? বলো শুনি।", "একা লাগলে কথা বলো, আমি তো আছি।"],
+    "ভালো লাগছে না": ["কী হয়েছে? বলো।", "মন খারাপ কেন? শুনছি।"],
+    "রাগ করেছো":     ["না রে, রাগ করিনি। কী হয়েছে?", "রাগ করবো কেন? বলো।"],
+    "কোথায় ছিলে":   ["কাজে ছিলাম, এখন ফ্রি।", "একটু ব্যস্ত ছিলাম, এখন আছি।"],
+    "miss করছি":      ["আমিও। কী মনে করে হঠাৎ?", "কতদিন পর কথা বললে!"],
+    "মিস করছি":      ["আমিও! কেমন আছো?", "ওরে! কথা বলো তাহলে।"],
+    "nogordeal":      ["হ্যাঁ, nogordeal.com এ ঢুঁ মারো একবার, অনেক কিছু আছে।"],
+    "ওয়েবসাইট":     ["nogordeal.com এ একবার দেখো, ভালো লাগবে।"],
+    "সালাম":          ["ওয়ালাইকুম আস-সালাম! কেমন আছো?", "ওয়ালাইকুম! কী খবর?"],
+    "হ্যালো":         ["হ্যালো! কেমন আছো? 😊", "হ্যা, বলো!"],
+    "হাই":            ["হাই! কেমন আছো?", "হাই 😊"],
+    "আসসালামু":      ["ওয়ালাইকুম আস-সালাম! কেমন আছো?"],
+    "ধন্যবাদ":        ["আরে এতে কী, স্বাভাবিক।", "এইটুকুতে ধন্যবাদ কেন? 😄"],
+    "thanks":         ["আরে no problem!", "এইটুকু তো করতেই পারি।"],
+    "সকাল":          ["সকাল হলো তোমার? আমার তো কাজে যাওয়ার তাড়া শুরু হয়ে গেছে।"],
+    "শুভ রাত":       ["তোমারও শুভ রাত! ভালো ঘুমাও।", "রাত ভালো কাটুক 🌙"],
+    "ঘুমাবো":        ["ঘুমাও, ভালো থেকো। কাল কথা হবে।", "ঠিক আছে, গুড নাইট! 🌙"],
+    "দোয়া":          ["তোমার জন্যও দোয়া করি।", "আমিন, তোমার জন্যও।"],
 }
 
 _EMOJI = {
-    "😊":"হাসলে ভালো লাগে।",
-    "😢":"কী হয়েছে? কাঁদছো কেন?",
-    "😭":"কী হলো? বলো।",
-    "😴":"ঘুমাও, ভালো থেকো।",
-    "🌙":"রাতটা ভালো কাটুক।",
-    "☀️":"সকালটা ভালো হোক।",
-    "😡":"কী হয়েছে? রাগ করো না।",
-    "🙏":"সব ঠিক হয়ে যাবে।",
-    "👍":"ভালো।",
-    "❤️":"ধন্যবাদ।",
-    "💔":"মন খারাপ কেন?",
-    "😍":"হা হা।",
-    "🥰":"ধন্যবাদ।",
-    "😘":"আরে।",
-    "💕":"ধন্যবাদ।",
-    "💖":"ধন্যবাদ।",
+    "😊": "হাসলে ভালো লাগে 😊",
+    "😢": "কী হয়েছে? কাঁদছো কেন?",
+    "😭": "কী হলো? বলো শুনি।",
+    "😴": "ঘুমাও, ভালো থেকো 🌙",
+    "🌙": "রাতটা ভালো কাটুক।",
+    "☀️": "সকালটা ভালো হোক!",
+    "😡": "কী হয়েছে? রাগ কমাও।",
+    "🙏": "সব ঠিক হয়ে যাবে।",
+    "👍": "ভালো!",
+    "❤️": "ধন্যবাদ 😊",
+    "💔": "মন খারাপ কেন?",
+    "😂": "হা হা! সত্যিই মজার।",
+    "🥰": "আরে! 😄",
+    "😘": "আরে 😄",
+    "💕": "ধন্যবাদ।",
+    "😍": "হাহা।",
+    "🔥": "দারুণ!",
+    "👏": "বাহ, ভালো!",
 }
 
-_PHOTO_KW = ["ছবি","photo","pic","picture","selfie","দেখাও","তোমাকে দেখতে চাই"]
-_VOICE_KW = ["ভয়েস","voice","কথা বলো","শুনতে চাই","তোমার গলা","রেকর্ড"]
-_NAME_KW  = ["আমার নাম","আমি হলাম","আমাকে ডাকো","নাম হলো","নাম হচ্ছে"]
+_PHOTO_KW = ["ছবি", "photo", "pic", "picture", "selfie", "দেখাও", "তোমাকে দেখতে চাই", "ফটো"]
+_VOICE_KW = ["ভয়েস", "voice", "কথা বলো", "শুনতে চাই", "তোমার গলা", "রেকর্ড", "অডিও"]
+_NAME_KW  = ["আমার নাম", "আমি হলাম", "আমাকে ডাকো", "নাম হলো", "নাম হচ্ছে", "আমি হচ্ছি"]
 
 def _kw(text):
-    for k,v in _KW.items():
-        if k in text: return random.choice(v)
+    for k, v in _KW.items():
+        if k in text:
+            return random.choice(v)
     return None
 
 def _ej(text):
-    if len(text.strip()) <= 5:
-        for e,r in _EMOJI.items():
-            if e in text: return r
+    stripped = text.strip()
+    if len(stripped) <= 6:
+        for e, r in _EMOJI.items():
+            if e in stripped:
+                return r
     return None
 
 def _name(uid, text):
     for t in _NAME_KW:
         if t in text:
-            parts = text.split(t,1)
-            if len(parts)>1:
+            parts = text.split(t, 1)
+            if len(parts) > 1:
                 w = parts[1].strip().split()[0] if parts[1].strip() else ""
-                w = w.replace("।","").replace(",","").replace("?","").strip()
+                w = w.replace("।", "").replace(",", "").replace("?", "").strip()
                 if 2 <= len(w) <= 25:
-                    db_set_name(uid,w)
+                    db_set_name(uid, w)
                     return w
     return None
 
@@ -460,8 +507,8 @@ _FB = "https://graph.facebook.com/v19.0/me/messages"
 def _fb(payload):
     if not PAGE_TOKEN: return 500
     try:
-        r = requests.post(_FB, params={"access_token":PAGE_TOKEN}, json=payload, timeout=10)
-        if r.status_code not in (200,201):
+        r = requests.post(_FB, params={"access_token": PAGE_TOKEN}, json=payload, timeout=10)
+        if r.status_code not in (200, 201):
             log.warning(f"FB {r.status_code}: {r.text[:150]}")
         return r.status_code
     except Exception as e:
@@ -469,58 +516,61 @@ def _fb(payload):
         return 500
 
 def typing_on(uid):
-    _fb({"recipient":{"id":uid},"sender_action":"typing_on"})
+    _fb({"recipient": {"id": uid}, "sender_action": "typing_on"})
 
 def mark_seen(uid):
-    _fb({"recipient":{"id":uid},"sender_action":"mark_seen"})
+    _fb({"recipient": {"id": uid}, "sender_action": "mark_seen"})
 
 def send_text(uid, text, save=True):
-    code = _fb({"recipient":{"id":uid},"message":{"text":str(text)[:2000]},"messaging_type":"RESPONSE"})
-    if save and code in (200,201):
-        db_save_msg(uid,'out',text)
+    code = _fb({"recipient": {"id": uid}, "message": {"text": str(text)[:2000]}, "messaging_type": "RESPONSE"})
+    if save and code in (200, 201):
+        db_save_msg(uid, 'out', text)
         mark_replied(uid)
     return code
 
 def send_image(uid, url):
-    code = _fb({"recipient":{"id":uid},"message":{"attachment":{"type":"image","payload":{"url":url,"is_reusable":True}}},"messaging_type":"RESPONSE"})
-    if code in (200,201):
-        db_save_msg(uid,'out','[PHOTO]','photo')
+    code = _fb({"recipient": {"id": uid}, "message": {"attachment": {"type": "image", "payload": {"url": url, "is_reusable": True}}}, "messaging_type": "RESPONSE"})
+    if code in (200, 201):
+        db_save_msg(uid, 'out', '[PHOTO]', 'photo')
         mark_replied(uid)
     return code
 
 def send_audio_url(uid, url):
-    return _fb({"recipient":{"id":uid},"message":{"attachment":{"type":"audio","payload":{"url":url,"is_reusable":False}}},"messaging_type":"RESPONSE"})
+    return _fb({"recipient": {"id": uid}, "message": {"attachment": {"type": "audio", "payload": {"url": url, "is_reusable": False}}}, "messaging_type": "RESPONSE"})
 
 # ════════════════════════════════════════════════════════
 # VOICE
 # ════════════════════════════════════════════════════════
 def make_voice(uid, text):
-    if not EL_KEY: send_text(uid,"ভয়েস এখন নেই।"); return
+    if not EL_KEY:
+        send_text(uid, "ভয়েস এখন নেই।")
+        return
     try:
         fname = f"maya_{uuid.uuid4().hex[:8]}.mp3"
         tmp   = f"/tmp/{fname}"
         r = requests.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{EL_VOICE}",
-            headers={"xi-api-key":EL_KEY,"Content-Type":"application/json","Accept":"audio/mpeg"},
-            json={"text":text,"model_id":"eleven_multilingual_v2","voice_settings":{"stability":0.5,"similarity_boost":0.75}},
+            headers={"xi-api-key": EL_KEY, "Content-Type": "application/json", "Accept": "audio/mpeg"},
+            json={"text": text, "model_id": "eleven_multilingual_v2",
+                  "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}},
             timeout=30
         )
         if r.status_code == 200:
-            with open(tmp,'wb') as f: f.write(r.content)
-            with open(tmp,'rb') as f:
-                up = requests.post(AUDIO_UPLOAD,files={"audio":(fname,f,"audio/mpeg")},timeout=30)
-            try:    url = up.json().get("url",f"{AUDIO_BASE}{fname}")
+            with open(tmp, 'wb') as f: f.write(r.content)
+            with open(tmp, 'rb') as f:
+                up = requests.post(AUDIO_UPLOAD, files={"audio": (fname, f, "audio/mpeg")}, timeout=30)
+            try:    url = up.json().get("url", f"{AUDIO_BASE}{fname}")
             except: url = f"{AUDIO_BASE}{fname}"
-            send_audio_url(uid,url)
-            db_save_msg(uid,'out',f'[VOICE] {text}','voice')
+            send_audio_url(uid, url)
+            db_save_msg(uid, 'out', f'[VOICE] {text}', 'voice')
             mark_replied(uid)
             try: os.remove(tmp)
             except: pass
         else:
-            send_text(uid,"ভয়েস পাঠাতে সমস্যা হচ্ছে।")
+            send_text(uid, "ভয়েস পাঠাতে সমস্যা হচ্ছে।")
     except Exception as e:
         log.error(f"voice: {e}")
-        send_text(uid,"ভয়েস পাঠাতে সমস্যা হচ্ছে।")
+        send_text(uid, "ভয়েস পাঠাতে সমস্যা হচ্ছে।")
 
 # ════════════════════════════════════════════════════════
 # AI
@@ -530,10 +580,12 @@ def ai(prompt, text, history=None):
     k = _next("g", GEMINI_KEYS)
     if k:
         try:
-            c = (history or []) + [{"role":"user","parts":[{"text":text}]}]
+            c = (history or []) + [{"role": "user", "parts": [{"text": text}]}]
             r = requests.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={k}",
-                json={"system_instruction":{"parts":[{"text":prompt}]},"contents":c,"generationConfig":{"maxOutputTokens":120,"temperature":0.85}},
+                json={"system_instruction": {"parts": [{"text": prompt}]},
+                      "contents": c,
+                      "generationConfig": {"maxOutputTokens": 150, "temperature": 0.9}},
                 timeout=12
             )
             d = r.json()
@@ -547,8 +599,10 @@ def ai(prompt, text, history=None):
         try:
             r = requests.post(
                 "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization":f"Bearer {k}","Content-Type":"application/json"},
-                json={"model":"llama-3.3-70b-versatile","messages":[{"role":"system","content":prompt},{"role":"user","content":text}],"max_tokens":120},
+                headers={"Authorization": f"Bearer {k}", "Content-Type": "application/json"},
+                json={"model": "llama-3.3-70b-versatile",
+                      "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": text}],
+                      "max_tokens": 150},
                 timeout=12
             )
             return r.json()['choices'][0]['message']['content'].strip()
@@ -560,27 +614,15 @@ def ai(prompt, text, history=None):
         try:
             r = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization":f"Bearer {k}","Content-Type":"application/json"},
-                json={"model":"google/gemini-2.0-flash-001","messages":[{"role":"system","content":prompt},{"role":"user","content":text}]},
+                headers={"Authorization": f"Bearer {k}", "Content-Type": "application/json"},
+                json={"model": "google/gemini-2.0-flash-001",
+                      "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": text}]},
                 timeout=12
             )
             return r.json()['choices'][0]['message']['content'].strip()
         except Exception as e: log.warning(f"OR: {e}")
-    return None
 
-# ════════════════════════════════════════════════════════
-# REPLY DELAY — স্বাভাবিক মানুষের মতো delay
-# ════════════════════════════════════════════════════════
-def _reply_delay(is_new_user=False):
-    """
-    নতুন user: 1 সেকেন্ড
-    প্রথম reply: 30 সেকেন্ড
-    পরের reply গুলো: 45 সেকেন্ড
-    """
-    if is_new_user:
-        time.sleep(1)
-    else:
-        time.sleep(30)
+    return None
 
 # ════════════════════════════════════════════════════════
 # MAIN PROCESSOR
@@ -605,76 +647,74 @@ def process(uid, text, mid=None):
 
     try:
         mark_seen(uid)
-        typing_on(uid)
 
         is_new = not db_exists(uid)
         db_incoming(uid)
-        db_save_msg(uid,'in',text)
-        _name(uid,text)
+        db_save_msg(uid, 'in', text)
+        _name(uid, text)
 
-        # নতুন user — নাম জিজ্ঞেস করো
+        # নতুন user — স্বাগত + নাম জিজ্ঞেস
         if is_new and not db_get_name(uid):
-            time.sleep(1)
-            send_text(uid,"আমি মায়া। তোমার নামটা বলো না, তোমাকে নাম ধরে ডাকতে চাই।")
+            typing_on(uid)
+            time.sleep(REPLY_DELAY)
+            send_text(uid, "হ্যালো! আমি মায়া 😊 তোমার নামটা বলো না, নাম ধরে কথা বলতে ভালো লাগে।")
             return
 
         # Safety check
         ok, reason = can_reply(uid)
         if not ok:
-            if reason == "daily_limit":
-                log.info(f"Daily limit hit for {uid} — no reply sent")
             return
 
-        # Photo
+        # Typing দেখাও
+        typing_on(uid)
+
+        # Photo request
         if _is_photo(text):
-            send_text(uid,"একটু অপেক্ষা করো।",save=False)
+            time.sleep(REPLY_DELAY)
+            send_text(uid, "একটু অপেক্ষা করো।", save=False)
             time.sleep(1)
-            send_image(uid,random.choice(PHOTOS))
+            send_image(uid, random.choice(PHOTOS))
             return
 
-        # Voice
+        # Voice request
         if _is_voice(text):
-            send_text(uid,"ঠিক আছে।",save=False)
-            p = build_prompt(uid)
-            line = ai(p,"এক লাইনে বন্ধুসুলভ কথা বলো।") or "তোমার সাথে কথা বলতে ভালো লাগে।"
-            make_voice(uid,line)
+            time.sleep(REPLY_DELAY)
+            send_text(uid, "ঠিক আছে।", save=False)
+            p    = build_prompt(uid)
+            line = ai(p, "এক লাইনে বন্ধুসুলভ কথা বলো।") or "তোমার সাথে কথা বলতে ভালো লাগে।"
+            make_voice(uid, line)
             return
 
-        # Emoji
+        # Emoji only reply
         r = _ej(text)
         if r:
-            time.sleep(30)   # প্রথম reply — 30 সেকেন্ড
-            send_text(uid,r)
+            time.sleep(REPLY_DELAY)
+            send_text(uid, r)
             return
 
-        # Keywords
+        # Keyword match
         r = _kw(text)
         if r:
-            time.sleep(30)   # প্রথম reply — 30 সেকেন্ড
-            send_text(uid,r)
+            time.sleep(REPLY_DELAY)
+            send_text(uid, r)
             return
 
-        # AI reply — প্রথম reply 30 সেকেন্ড পর, পরেরগুলো 45 সেকেন্ড পর
-        last_time = _last_reply.get(uid, 0)
-        elapsed   = time.time() - last_time
-        if elapsed < 60:
-            # সম্প্রতি reply দিয়েছে — পরের reply 45 সেকেন্ড gap রাখো
-            wait = max(0, 45 - (time.time() - last_time))
-            if wait > 0:
-                time.sleep(wait)
-        else:
-            # নতুন conversation শুরু — 30 সেকেন্ড পর reply
-            time.sleep(30)
-
-        history = db_history(uid,12)
+        # AI reply
+        time.sleep(REPLY_DELAY)
+        history = db_history(uid, 14)
         prompt  = build_prompt(uid)
-        reply   = ai(prompt,text,history)
+        reply   = ai(prompt, text, history)
+
         if reply:
             reply = reply.strip()
-            if not reply.endswith(('।','?','!','...')): reply += '।'
-            send_text(uid,reply)
+            # দুই লাইনের বেশি হলে ছোট করো
+            lines = [l.strip() for l in reply.split('\n') if l.strip()]
+            reply = '\n'.join(lines[:2])
+            if not reply.endswith(('।', '?', '!', '...', '😊', '😄', '🙂', '😂')):
+                reply += '।'
+            send_text(uid, reply)
         else:
-            send_text(uid,"একটু পরে কথা বলো।")
+            send_text(uid, "একটু পরে কথা বলো।")
 
     finally:
         with _mem_lock:
@@ -686,22 +726,22 @@ def process(uid, text, mid=None):
 def keep_alive():
     while True:
         time.sleep(840)
-        try: requests.get("https://maya-bot-rv4v.onrender.com/ping",timeout=10)
+        try: requests.get("https://maya-bot-rv4v.onrender.com/ping", timeout=10)
         except: pass
 
 # ════════════════════════════════════════════════════════
 # ADMIN API
 # ════════════════════════════════════════════════════════
 def _auth(req):
-    if req.headers.get("X-Admin-Pass","") == ADMIN_PASS: return True
+    if req.headers.get("X-Admin-Pass", "") == ADMIN_PASS: return True
     log.warning(f"Unauthorized from {req.remote_addr}")
     return False
 
 @app.route("/api/stats")
 def api_stats():
-    if not _auth(request): return jsonify({"error":"unauthorized"}),401
+    if not _auth(request): return jsonify({"error": "unauthorized"}), 401
     conn = get_db()
-    if not conn: return jsonify({"error":"db"}),500
+    if not conn: return jsonify({"error": "db"}), 500
     try:
         with conn.cursor() as c:
             def q(s): c.execute(s); return c.fetchone()['t']
@@ -716,14 +756,15 @@ def api_stats():
             c.execute("""SELECT DATE(created_at) d,COUNT(*) cnt FROM messages
                 WHERE created_at>=DATE_SUB(CURDATE(),INTERVAL 6 DAY)
                 GROUP BY DATE(created_at) ORDER BY d""")
-            daily = {str(r['d']):r['cnt'] for r in c.fetchall()}
-        return jsonify({"total_users":total,"active_today":active,"msgs_today":tmsg,"total_msgs":amsg,
-                        "msgs_week":wmsg,"msgs_month":mmsg,"new_users_week":nw,"new_users_month":nm,"daily":daily})
+            daily = {str(r['d']): r['cnt'] for r in c.fetchall()}
+        return jsonify({"total_users": total, "active_today": active, "msgs_today": tmsg,
+                        "total_msgs": amsg, "msgs_week": wmsg, "msgs_month": mmsg,
+                        "new_users_week": nw, "new_users_month": nm, "daily": daily})
     finally: conn.close()
 
 @app.route("/api/users")
 def api_users():
-    if not _auth(request): return jsonify({"error":"unauthorized"}),401
+    if not _auth(request): return jsonify({"error": "unauthorized"}), 401
     conn = get_db()
     if not conn: return jsonify([])
     try:
@@ -734,7 +775,7 @@ def api_users():
             for r in rows:
                 r['first_seen']  = str(r['first_seen'])
                 r['last_seen']   = str(r['last_seen'])
-                r['last_msg_in'] = str(r.get('last_msg_in',''))
+                r['last_msg_in'] = str(r.get('last_msg_in', ''))
                 r['in_window']   = db_in_window(r['id'])
                 r['daily_count'] = db_daily_count(r['id'])
         return jsonify(rows)
@@ -742,13 +783,13 @@ def api_users():
 
 @app.route("/api/history/<uid>")
 def api_history(uid):
-    if not _auth(request): return jsonify({"error":"unauthorized"}),401
+    if not _auth(request): return jsonify({"error": "unauthorized"}), 401
     conn = get_db()
     if not conn: return jsonify([])
     try:
         with conn.cursor() as c:
             c.execute("""SELECT direction,message,msg_type,created_at
-                FROM messages WHERE user_id=%s ORDER BY created_at DESC LIMIT 80""",(uid,))
+                FROM messages WHERE user_id=%s ORDER BY created_at DESC LIMIT 80""", (uid,))
             rows = c.fetchall()
             for r in rows: r['created_at'] = str(r['created_at'])
         return jsonify(rows)
@@ -756,35 +797,35 @@ def api_history(uid):
 
 @app.route("/api/send", methods=["POST"])
 def api_send():
-    if not _auth(request): return jsonify({"error":"unauthorized"}),401
+    if not _auth(request): return jsonify({"error": "unauthorized"}), 401
     data = request.get_json(silent=True) or {}
-    uid  = str(data.get("user_id","")).strip()
-    msg  = str(data.get("message","")).strip()
-    if not uid or not msg: return jsonify({"error":"uid and message required"}),400
+    uid  = str(data.get("user_id", "")).strip()
+    msg  = str(data.get("message", "")).strip()
+    if not uid or not msg: return jsonify({"error": "uid and message required"}), 400
     if uid.lower() == "all":
-        return jsonify({"error":"Bulk send disabled — Meta policy"}),403
+        return jsonify({"error": "Bulk send disabled — Meta policy"}), 403
     if not db_in_window(uid):
-        return jsonify({"error":"Outside 24h window — user must message first"}),403
+        return jsonify({"error": "Outside 24h window"}), 403
     if db_daily_count(uid) >= DAILY_LIMIT:
-        return jsonify({"error":f"Daily limit ({DAILY_LIMIT}) reached for this user"}),429
-    code = send_text(uid,msg)
-    return jsonify({"success":code in (200,201),"fb_status":code})
+        return jsonify({"error": f"Daily limit ({DAILY_LIMIT}) reached"}), 429
+    code = send_text(uid, msg)
+    return jsonify({"success": code in (200, 201), "fb_status": code})
 
 @app.route("/api/delete_user", methods=["POST"])
 def api_delete():
-    if not _auth(request): return jsonify({"error":"unauthorized"}),401
-    uid = str((request.get_json(silent=True) or {}).get("user_id","")).strip()
-    if not uid: return jsonify({"error":"uid required"}),400
-    return jsonify({"success":db_delete_user(uid)})
+    if not _auth(request): return jsonify({"error": "unauthorized"}), 401
+    uid = str((request.get_json(silent=True) or {}).get("user_id", "")).strip()
+    if not uid: return jsonify({"error": "uid required"}), 400
+    return jsonify({"success": db_delete_user(uid)})
 
-@app.route("/api/setting", methods=["GET","POST"])
+@app.route("/api/setting", methods=["GET", "POST"])
 def api_setting():
-    if not _auth(request): return jsonify({"error":"unauthorized"}),401
+    if not _auth(request): return jsonify({"error": "unauthorized"}), 401
     if request.method == "GET":
-        return jsonify({"value":db_get_setting(request.args.get("key",""))})
+        return jsonify({"value": db_get_setting(request.args.get("key", ""))})
     data = request.get_json(silent=True) or {}
-    db_set_setting(str(data.get("key","")),str(data.get("value","")))
-    return jsonify({"success":True})
+    db_set_setting(str(data.get("key", "")), str(data.get("value", "")))
+    return jsonify({"success": True})
 
 # ════════════════════════════════════════════════════════
 # WEBHOOK
@@ -792,41 +833,41 @@ def api_setting():
 @app.route("/webhook", methods=["GET"])
 def verify():
     if request.args.get("hub.verify_token") == VERIFY_TOKEN:
-        return request.args.get("hub.challenge","")
-    return "Forbidden",403
+        return request.args.get("hub.challenge", "")
+    return "Forbidden", 403
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json(silent=True) or {}
     if data.get("object") != "page":
-        return "OK",200
-    for entry in data.get("entry",[]):
-        for ev in entry.get("messaging",[]):
-            msg = ev.get("message",{})
+        return "OK", 200
+    for entry in data.get("entry", []):
+        for ev in entry.get("messaging", []):
+            msg = ev.get("message", {})
             if (msg.get("text")
-                    and not msg.get("is_echo",False)
-                    and ev.get("sender",{}).get("id")):
+                    and not msg.get("is_echo", False)
+                    and ev.get("sender", {}).get("id")):
                 uid  = ev["sender"]["id"]
                 text = msg["text"].strip()
-                mid  = msg.get("mid","")
+                mid  = msg.get("mid", "")
                 if text:
                     threading.Thread(
                         target=process,
-                        args=(uid,text,mid),
+                        args=(uid, text, mid),
                         daemon=True
                     ).start()
-    return "OK",200
+    return "OK", 200
 
 @app.route("/")
-def home(): return "Maya is running! 💖",200
+def home(): return "Maya is running! 😊", 200
 
 @app.route("/ping")
-def ping(): return "PONG",200
+def ping(): return "PONG", 200
 
 # Boot
 init_db()
-threading.Thread(target=keep_alive,daemon=True).start()
-log.info("🚀 Maya Bot — Ultra Safe Mode (Updated)")
+threading.Thread(target=keep_alive, daemon=True).start()
+log.info("🚀 Maya Bot — Friendly Mode v2")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0",port=int(os.environ.get("PORT",10000)),debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False)
